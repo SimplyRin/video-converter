@@ -37,6 +37,10 @@ Windows では `ffmpeg.exe` と `ffprobe.exe`、macOS では `ffmpeg` と `ffpro
 
 自動ダウンロード機能を実装するときも、検証済みのファイルをアプリデータディレクトリの `tools/ffmpeg/current/` へ配置することで、そのまま利用できます。
 
+GitHub Actionsが作成するリリースZIPでは、実行ファイルを基準にした`tools/ffmpeg/`へGPL版の
+FFmpegとFFprobeを配置済みです。Windows x64版はBtbN/FFmpeg-Buildsを使用し、macOS arm64版は
+FFmpeg 8.1.2とx264をリリース処理内でビルドします。
+
 ## 実装済み機能
 
 - ファイル選択とドラッグ＆ドロップ
