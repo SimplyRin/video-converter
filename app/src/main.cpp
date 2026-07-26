@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -9,12 +9,12 @@
 
 int main(int argc, char *argv[])
 {
-    QGuiApplication::setApplicationName(QStringLiteral("DiscordVideo"));
-    QGuiApplication::setApplicationDisplayName(QStringLiteral("DiscordVideo"));
-    QGuiApplication::setOrganizationDomain(QStringLiteral("simplyrin.net"));
-    QGuiApplication::setOrganizationName(QStringLiteral("SimplyRin"));
+    QApplication::setApplicationName(QStringLiteral("DiscordVideo"));
+    QApplication::setApplicationDisplayName(QStringLiteral("DiscordVideo"));
+    QApplication::setOrganizationDomain(QStringLiteral("simplyrin.net"));
+    QApplication::setOrganizationName(QStringLiteral("SimplyRin"));
 
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
 
     AppController controller;
@@ -28,4 +28,3 @@ int main(int argc, char *argv[])
 
     return app.exec();
 }
-

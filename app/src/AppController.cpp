@@ -6,6 +6,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QtGlobal>
@@ -115,6 +116,22 @@ void AppController::selectFile(const QUrl &url)
 
     m_selectedFilePath = info.absoluteFilePath();
     emit selectedFileChanged();
+}
+
+void AppController::chooseFile()
+{
+    if (m_busy) {
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        nullptr,
+        QStringLiteral("動画ファイルを選択"),
+        QString(),
+        QStringLiteral("動画ファイル (*.mp4 *.mkv *.mov *.avi *.webm *.m4v);;すべてのファイル (*)"));
+    if (!path.isEmpty()) {
+        selectFile(QUrl::fromLocalFile(path));
+    }
 }
 
 void AppController::clearSelectedFile()

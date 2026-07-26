@@ -31,6 +31,7 @@ public:
     [[nodiscard]] QString toolStatus() const;
 
     Q_INVOKABLE void selectFile(const QUrl &url);
+    Q_INVOKABLE void chooseFile();
     Q_INVOKABLE void clearSelectedFile();
     Q_INVOKABLE void refreshTools();
     Q_INVOKABLE void encode(int targetSizeMiB, qint64 startMs = -1, qint64 endMs = -1);
@@ -71,4 +72,3 @@ private:
     QProcess m_probeProcess;
     QProcess m_encodeProcess;
 };
-

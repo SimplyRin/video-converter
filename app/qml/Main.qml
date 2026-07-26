@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import QtQuick
-import QtQuick.Controls
-import QtQuick.Dialogs
+import QtQuick.Controls.Fusion
 import QtQuick.Layouts
 
 ApplicationWindow {
     id: root
 
-    width: 327
-    height: 138
-    minimumWidth: 327
-    maximumWidth: 327
-    minimumHeight: 138
-    maximumHeight: 138
+    width: 420
+    height: 180
+    minimumWidth: 420
+    maximumWidth: 420
+    minimumHeight: 180
+    maximumHeight: 180
     visible: true
     title: "DiscordVideo"
     color: "#f4f4f4"
@@ -35,7 +34,7 @@ ApplicationWindow {
 
     function showMessage(messageTitle, messageText) {
         messageDialog.title = messageTitle
-        messageDialog.text = messageText
+        messageDialog.messageText = messageText
         messageDialog.open()
     }
 
@@ -56,131 +55,151 @@ ApplicationWindow {
         }
     }
 
-    Text {
-        x: 14
-        y: 12
-        text: "目標のファイルサイズ (MB) を入力してファイルを選択してください"
-        font.pixelSize: 12
-        color: "#202020"
-    }
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.leftMargin: 14
+        anchors.rightMargin: 14
+        anchors.topMargin: 8
+        anchors.bottomMargin: 10
+        spacing: 7
 
-    Label {
-        x: 14
-        y: 35
-        text: "ファイル:"
-        font.pixelSize: 12
-    }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 24
+            spacing: 6
 
-    Label {
-        x: 60
-        y: 35
-        width: 200
-        text: backend.selectedFileName
-        elide: Text.ElideMiddle
-        font.pixelSize: 12
-    }
+            Label {
+                Layout.fillWidth: true
+                text: "目標のファイルサイズ (MB) を入力してファイルを選択してください"
+                font.pixelSize: 12
+            }
 
-    Button {
-        x: 266
-        y: 31
-        width: 48
-        height: 25
-        text: backend.hasSelectedFile ? "削除" : "選択"
-        enabled: !backend.busy
-        font.pixelSize: 12
-        onClicked: {
-            if (backend.hasSelectedFile)
-                backend.clearSelectedFile()
-            else
-                fileDialog.open()
+            Button {
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                text: "i"
+                flat: true
+                font.bold: true
+                onClicked: aboutDialog.open()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 28
+            spacing: 6
+
+            Label {
+                text: "ファイル:"
+                font.pixelSize: 12
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: backend.selectedFileName
+                elide: Text.ElideMiddle
+                font.pixelSize: 12
+            }
+
+            Button {
+                Layout.preferredWidth: 64
+                Layout.preferredHeight: 28
+                text: backend.hasSelectedFile ? "削除" : "選択"
+                enabled: !backend.busy
+                font.pixelSize: 12
+                onClicked: {
+                    if (backend.hasSelectedFile)
+                        backend.clearSelectedFile()
+                    else
+                        backend.chooseFile()
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 30
+            spacing: 8
+
+            Label {
+                text: "目標ファイルサイズ (半角数字):"
+                font.pixelSize: 12
+            }
+
+            Item {
+                Layout.fillWidth: true
+            }
+
+            TextField {
+                id: targetSize
+                Layout.preferredWidth: 82
+                Layout.preferredHeight: 30
+                enabled: !backend.busy
+                horizontalAlignment: TextInput.AlignRight
+                placeholderText: "8"
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: 99999 }
+                font.pixelSize: 12
+            }
+
+            Label {
+                text: "MB"
+                font.pixelSize: 12
+            }
+        }
+
+        Button {
+            id: encodeButton
+            Layout.fillWidth: true
+            Layout.preferredHeight: 32
+            text: backend.busy ? backend.statusText : "エンコード！"
+            font.pixelSize: 12
+            onClicked: backend.busy ? backend.cancelEncoding() : root.requestEncoding()
+
+            ToolTip.visible: hovered && backend.busy
+            ToolTip.text: backend.busy ? "クリックしてキャンセル" : ""
+        }
+
+        ProgressBar {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 4
+            from: 0
+            to: 1
+            value: backend.progress
+            opacity: backend.busy ? 1 : 0
         }
     }
 
-    Label {
-        x: 14
-        y: 67
-        text: "目標ファイルサイズ (半角数字):"
-        font.pixelSize: 12
-    }
-
-    TextField {
-        id: targetSize
-        x: 167
-        y: 62
-        width: 109
-        height: 27
-        enabled: !backend.busy
-        horizontalAlignment: TextInput.AlignRight
-        placeholderText: "8"
-        inputMethodHints: Qt.ImhDigitsOnly
-        validator: IntValidator { bottom: 1; top: 99999 }
-        font.pixelSize: 12
-    }
-
-    Label {
-        x: 286
-        y: 67
-        text: "MB"
-        font.pixelSize: 12
-    }
-
-    Button {
-        id: encodeButton
-        x: 14
-        y: 96
-        width: 300
-        height: 27
-        text: backend.busy ? backend.statusText : "エンコード！"
-        font.pixelSize: 12
-        onClicked: backend.busy ? backend.cancelEncoding() : root.requestEncoding()
-
-        ToolTip.visible: hovered && backend.busy
-        ToolTip.text: backend.busy ? "クリックしてキャンセル" : ""
-    }
-
-    ProgressBar {
-        x: 14
-        y: 125
-        width: 300
-        height: 4
-        from: 0
-        to: 1
-        value: backend.progress
-        visible: backend.busy
-    }
-
-    Button {
-        x: 302
-        y: 2
-        width: 20
-        height: 20
-        text: "i"
-        flat: true
-        font.bold: true
-        onClicked: aboutDialog.open()
-    }
-
-    FileDialog {
-        id: fileDialog
-        title: "動画ファイルを選択"
-        nameFilters: ["動画ファイル (*.mp4 *.mkv *.mov *.avi *.webm *.m4v)", "すべてのファイル (*)"]
-        onAccepted: backend.selectFile(selectedFile)
-    }
-
-    MessageDialog {
+    Dialog {
         id: messageDialog
-        buttons: MessageDialog.Ok
+        property string messageText: ""
+
+        anchors.centerIn: parent
+        width: 300
+        modal: true
+        standardButtons: Dialog.Ok
+
+        contentItem: Label {
+            width: 270
+            wrapMode: Text.WordWrap
+            text: messageDialog.messageText
+        }
     }
 
-    MessageDialog {
+    Dialog {
         id: finishedDialog
+        anchors.centerIn: parent
+        width: 300
+        modal: true
         title: "完了"
-        text: "動画のエンコードが完了しました。"
-        informativeText: "出力ファイルを表示しますか？"
-        buttons: MessageDialog.Yes | MessageDialog.No
-        onButtonClicked: function(button, role) {
-            if (button === MessageDialog.Yes)
-                backend.revealLatestOutput()
+
+        standardButtons: Dialog.Yes | Dialog.No
+        onAccepted: backend.revealLatestOutput()
+
+        contentItem: Label {
+            width: 270
+            wrapMode: Text.WordWrap
+            text: "動画のエンコードが完了しました。\n出力ファイルを表示しますか？"
         }
     }
 

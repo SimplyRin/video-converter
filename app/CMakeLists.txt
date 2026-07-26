@@ -16,6 +16,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Qml
     Quick
     QuickControls2
+    Widgets
 )
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -42,6 +43,7 @@ target_link_libraries(discord-video PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Widgets
 )
 
 set_target_properties(discord-video PROPERTIES
