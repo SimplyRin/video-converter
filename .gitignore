@@ -80,3 +80,16 @@ Temporary Items
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/java,visualstudiocode,macos
+
+# CMake / Qt
+app/build/
+app/build-*/
+app/cmake-build-*/
+app/.qt/
+app/.qtc_clangd/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.qmlc
+*.jsc
