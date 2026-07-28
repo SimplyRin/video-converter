@@ -37,11 +37,27 @@ qt_add_resources(discord-video "discordvideo_icons"
     FILES "${DISCORDVIDEO_ICON_ICO}"
 )
 
+set(DISCORDVIDEO_LICENSE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE.md")
+set(DISCORDVIDEO_THIRD_PARTY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md")
+set_source_files_properties("${DISCORDVIDEO_LICENSE_FILE}" PROPERTIES
+    QT_RESOURCE_ALIAS "LICENSE.md"
+)
+set_source_files_properties("${DISCORDVIDEO_THIRD_PARTY_FILE}" PROPERTIES
+    QT_RESOURCE_ALIAS "THIRD_PARTY_NOTICES.md"
+)
+qt_add_resources(discord-video "discordvideo_licenses"
+    PREFIX "/licenses"
+    FILES
+        "${DISCORDVIDEO_LICENSE_FILE}"
+        "${DISCORDVIDEO_THIRD_PARTY_FILE}"
+)
+
 qt_add_qml_module(discord-video
     URI DiscordVideo
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/AboutWindow.qml
         qml/TrimWindow.qml
 )
 

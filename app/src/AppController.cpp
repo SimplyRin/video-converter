@@ -32,6 +32,15 @@ namespace {
 constexpr int audioBitrateKbps = 96;
 constexpr int minimumVideoBitrateKbps = 50;
 constexpr double containerSafetyFactor = 0.97;
+
+QString readEmbeddedTextFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QStringLiteral("ライセンス情報を読み込めませんでした。");
+    }
+    return QString::fromUtf8(file.readAll());
+}
 }
 
 AppController::AppController(QObject *parent)
@@ -164,6 +173,16 @@ QString AppController::toolStatus() const
         return QStringLiteral("FFmpeg を利用できます。");
     }
     return QStringLiteral("FFmpeg または FFprobe が見つかりません。app/tools/ffmpeg へ配置するか、PATH 設定してください。");
+}
+
+QString AppController::licenseText() const
+{
+    return readEmbeddedTextFile(QStringLiteral(":/licenses/LICENSE.md"));
+}
+
+QString AppController::thirdPartyNoticesText() const
+{
+    return readEmbeddedTextFile(QStringLiteral(":/licenses/THIRD_PARTY_NOTICES.md"));
 }
 
 bool AppController::checkingForUpdates() const
@@ -438,6 +457,12 @@ void AppController::openLatestRelease()
         ? m_latestReleaseUrl
         : QUrl(QStringLiteral("https://github.com/SimplyRin/video-converter/releases/latest"));
     QDesktopServices::openUrl(url);
+}
+
+void AppController::openProjectRepository()
+{
+    QDesktopServices::openUrl(
+        QUrl(QStringLiteral("https://github.com/SimplyRin/video-converter")));
 }
 
 void AppController::locateTools()

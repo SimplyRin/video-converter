@@ -72,7 +72,7 @@ ApplicationWindow {
                 text: "i"
                 flat: true
                 font.bold: true
-                onClicked: aboutDialog.open()
+                onClicked: aboutWindow.showSection(backend.updateAvailable ? 1 : 0)
                 Accessible.name: backend.updateAvailable
                                  ? "アップデートがあります。アプリ情報を開く"
                                  : "アプリ情報を開く"
@@ -242,77 +242,8 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
-        id: aboutDialog
-        anchors.centerIn: parent
-        width: 350
-        modal: true
-        title: backend.updateAvailable ? "アップデートがあります" : "アプリ情報"
-        standardButtons: Dialog.Ok
-
-        contentItem: ColumnLayout {
-            width: 320
-            spacing: 10
-
-            Label {
-                Layout.fillWidth: true
-                text: backend.updateAvailable
-                      ? "新しいDiscordVideoを利用できます"
-                      : "DiscordVideo"
-                font.bold: true
-                font.pixelSize: 15
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: "現在のバージョン: v" + backend.currentVersion
-                font.pixelSize: 12
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: backend.updateStatus
-                wrapMode: Text.WordWrap
-                color: backend.updateAvailable
-                       ? (aboutDialog.palette.window.hslLightness < 0.5 ? "#ffb74d" : "#e65100")
-                       : aboutDialog.palette.windowText
-            }
-
-            Button {
-                Layout.fillWidth: true
-                text: backend.latestVersion.length > 0
-                      ? backend.latestVersion + " のGitHub Releaseを開く"
-                      : "GitHub Releaseを開く"
-                highlighted: true
-                visible: backend.updateAvailable
-                onClicked: {
-                    backend.openLatestRelease()
-                    aboutDialog.close()
-                }
-            }
-
-            Button {
-                Layout.fillWidth: true
-                text: backend.checkingForUpdates ? "確認中..." : "アップデートを再確認"
-                enabled: !backend.checkingForUpdates
-                onClicked: backend.checkForUpdates()
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 1
-                color: aboutDialog.palette.mid
-            }
-
-            Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: "GNU General Public License v3.0 or later\n\nエンコード機能には GPL 版 FFmpeg を使用します。"
-                font.pixelSize: 11
-                opacity: 0.8
-            }
-        }
+    AboutWindow {
+        id: aboutWindow
     }
 
     TrimWindow {

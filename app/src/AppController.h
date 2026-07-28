@@ -26,6 +26,8 @@ class AppController final : public QObject
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY updateStateChanged)
     Q_PROPERTY(QUrl latestReleaseUrl READ latestReleaseUrl NOTIFY updateStateChanged)
     Q_PROPERTY(QString updateStatus READ updateStatus NOTIFY updateStateChanged)
+    Q_PROPERTY(QString licenseText READ licenseText CONSTANT)
+    Q_PROPERTY(QString thirdPartyNoticesText READ thirdPartyNoticesText CONSTANT)
 
 public:
     explicit AppController(QObject *parent = nullptr);
@@ -44,6 +46,8 @@ public:
     [[nodiscard]] QString latestVersion() const;
     [[nodiscard]] QUrl latestReleaseUrl() const;
     [[nodiscard]] QString updateStatus() const;
+    [[nodiscard]] QString licenseText() const;
+    [[nodiscard]] QString thirdPartyNoticesText() const;
 
     Q_INVOKABLE void selectFile(const QUrl &url);
     Q_INVOKABLE void chooseFile();
@@ -58,6 +62,7 @@ public:
     Q_INVOKABLE void revealLatestOutput();
     Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE void openLatestRelease();
+    Q_INVOKABLE void openProjectRepository();
 
 signals:
     void selectedFileChanged();
