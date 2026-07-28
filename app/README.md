@@ -58,5 +58,7 @@ Windows版はルートの`DiscordVideo.exe`を起動します。これは外部D
 - libx264 / AAC による MP4 エンコード
 - WindowsのNVENC、Quick Sync、AMFおよびmacOSのVideoToolboxによる任意のGPUエンコード
 - GPUエンコードを利用できない場合のlibx264への自動フォールバック
+- トリミング範囲を`-c copy`で無劣化の一時MP4へ保存してから行う最終エンコード
+- 一時MP4をエンコード完了後に削除する任意オプション（既定では保持）
 - FFmpeg の進捗表示とキャンセル
 - Windows Explorer / macOS Finder での出力ファイル表示

@@ -9,11 +9,11 @@ ApplicationWindow {
     id: trimWindow
 
     width: 681
-    height: 622
+    height: 680
     minimumWidth: 681
     maximumWidth: 681
-    minimumHeight: 622
-    maximumHeight: 622
+    minimumHeight: 680
+    maximumHeight: 680
     visible: false
     modality: Qt.ApplicationModal
     flags: Qt.Dialog
@@ -173,6 +173,24 @@ ApplicationWindow {
             ToolTip.text: "利用できない場合は自動的に CPU エンコードへ切り替えます。"
         }
 
+        CheckBox {
+            id: deleteCacheAfterEncoding
+            text: "エンコード完了後に一時ファイルを削除する"
+            checked: false
+            enabled: trimWindow.startPosition >= 0 && trimWindow.endPosition >= 0
+
+            ToolTip.visible: hovered
+            ToolTip.text: "トリミング範囲を指定した場合に作成される一時MP4が対象です。"
+        }
+
+        Label {
+            Layout.fillWidth: true
+            text: "一時ファイルは、指定したトリミング範囲を再エンコードせずに保存した無劣化動画です。"
+            wrapMode: Text.WordWrap
+            font.pixelSize: 11
+            opacity: 0.75
+        }
+
         RowLayout {
             Layout.fillWidth: true
 
@@ -202,7 +220,8 @@ ApplicationWindow {
                     backend.encode(trimWindow.targetSizeMiB,
                                    hasStart ? Math.round(trimWindow.startPosition) : -1,
                                    hasEnd ? Math.round(trimWindow.endPosition) : -1,
-                                   preferHardwareEncoder.checked)
+                                   preferHardwareEncoder.checked,
+                                   deleteCacheAfterEncoding.checked)
                     trimWindow.close()
                 }
             }

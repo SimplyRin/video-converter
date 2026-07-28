@@ -17,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QUuid>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -32,7 +33,41 @@ AppController::AppController(QObject *parent)
     : QObject(parent)
 {
     m_probeProcess.setProcessChannelMode(QProcess::SeparateChannels);
+    m_cacheProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_encodeProcess.setProcessChannelMode(QProcess::SeparateChannels);
+
+    connect(&m_cacheProcess, &QProcess::readyReadStandardOutput,
+            this, &AppController::consumeCacheProgressOutput);
+    connect(&m_cacheProcess, &QProcess::readyReadStandardError, this, [this] {
+        m_cacheErrorBuffer += m_cacheProcess.readAllStandardError();
+        constexpr qsizetype maximumErrorBufferSize = 32 * 1024;
+        if (m_cacheErrorBuffer.size() > maximumErrorBufferSize) {
+            m_cacheErrorBuffer = m_cacheErrorBuffer.right(maximumErrorBufferSize);
+        }
+    });
+    connect(&m_cacheProcess,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this,
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                if (!m_busy) {
+                    return;
+                }
+
+                const bool succeeded = exitStatus == QProcess::NormalExit
+                    && exitCode == 0
+                    && QFileInfo(m_cacheFilePath).size() > 0;
+                if (!succeeded) {
+                    const QString errorMessage = QString::fromUtf8(m_cacheErrorBuffer).trimmed();
+                    removeCacheFile();
+                    setBusy(false);
+                    setProgress(0.0);
+                    fail(QStringLiteral("キャッシュ作成失敗"), errorMessage);
+                    return;
+                }
+
+                setProgress(0.0);
+                prepareEncodingAttempts(m_pendingVideoBitrateKbps);
+            });
 
     connect(&m_encodeProcess, &QProcess::readyReadStandardOutput,
             this, &AppController::consumeProgressOutput);
@@ -72,6 +107,9 @@ AppController::AppController(QObject *parent)
                 setBusy(false);
                 setProgress(1.0);
                 setStatusText(QStringLiteral("完了"));
+                if (m_deleteCacheAfterEncoding) {
+                    removeCacheFile();
+                }
                 emit encodingFinished(m_latestOutputPath);
             });
 
@@ -169,7 +207,8 @@ void AppController::refreshTools()
 void AppController::encode(int targetSizeMiB,
                            qint64 startMs,
                            qint64 endMs,
-                           bool preferHardwareEncoder)
+                           bool preferHardwareEncoder,
+                           bool deleteCacheAfterEncoding)
 {
     if (m_busy) {
         return;
@@ -193,6 +232,8 @@ void AppController::encode(int targetSizeMiB,
         return;
     }
 
+    m_cacheFilePath.clear();
+    m_deleteCacheAfterEncoding = deleteCacheAfterEncoding;
     m_latestOutputPath.clear();
     probeDuration(targetSizeMiB, startMs, endMs, preferHardwareEncoder);
 }
@@ -203,17 +244,25 @@ void AppController::cancelEncoding()
         return;
     }
     setBusy(false);
+    const bool cacheCreationWasRunning = m_cacheProcess.state() != QProcess::NotRunning;
     if (m_probeProcess.state() != QProcess::NotRunning) {
         disconnect(&m_probeProcess, nullptr, this, nullptr);
         m_probeProcess.kill();
         m_probeProcess.waitForFinished(1000);
     }
+    if (cacheCreationWasRunning) {
+        m_cacheProcess.kill();
+        m_cacheProcess.waitForFinished(1000);
+    }
     if (m_encodeProcess.state() != QProcess::NotRunning) {
         m_encodeProcess.kill();
         m_encodeProcess.waitForFinished(1000);
-        if (!m_latestOutputPath.isEmpty()) {
-            QFile::remove(m_latestOutputPath);
-        }
+    }
+    if (!m_latestOutputPath.isEmpty()) {
+        QFile::remove(m_latestOutputPath);
+    }
+    if (cacheCreationWasRunning) {
+        removeCacheFile();
     }
     setProgress(0.0);
     setStatusText(QStringLiteral("エンコード！"));
@@ -372,19 +421,65 @@ void AppController::startEncoding(int targetSizeMiB,
         return;
     }
 
-    auto argumentsForEncoder = [this,
-                                startMs,
-                                endMs,
-                                videoBitrateKbps,
-                                outputPath](const QString &encoder) {
+    m_latestOutputPath = outputPath;
+    m_activeDurationMs = durationMs;
+    m_pendingVideoBitrateKbps = videoBitrateKbps;
+    m_hardwareEncodingRequested = preferHardwareEncoder;
+    m_progressBuffer.clear();
+
+    if (startMs >= 0) {
+        const QFileInfo input(m_selectedFilePath);
+        const QDir inputDirectory(input.absolutePath());
+        do {
+            const QString cacheId = QUuid::createUuid()
+                                        .toString(QUuid::WithoutBraces)
+                                        .section(QLatin1Char('-'), 0, 0);
+            const QString cacheName = QStringLiteral("%1_%2M_%3.mp4")
+                                          .arg(input.completeBaseName())
+                                          .arg(targetSizeMiB)
+                                          .arg(cacheId);
+            m_cacheFilePath = inputDirectory.filePath(cacheName);
+        } while (QFileInfo::exists(m_cacheFilePath));
+
+        m_encodingInputPath = m_cacheFilePath;
+        startCacheCreation(startMs, endMs);
+        return;
+    }
+
+    m_encodingInputPath = m_selectedFilePath;
+    prepareEncodingAttempts(videoBitrateKbps);
+}
+
+void AppController::startCacheCreation(qint64 startMs, qint64 endMs)
+{
+    m_cacheProgressBuffer.clear();
+    m_cacheErrorBuffer.clear();
+    setStatusText(QStringLiteral("無劣化の一時ファイルを作成中: 0.0%"));
+
+    const QStringList arguments {
+        QStringLiteral("-y"),
+        QStringLiteral("-i"), m_selectedFilePath,
+        QStringLiteral("-ss"), formatTime(startMs),
+        QStringLiteral("-t"), formatTime(endMs - startMs),
+        QStringLiteral("-c"), QStringLiteral("copy"),
+        QStringLiteral("-progress"), QStringLiteral("pipe:1"),
+        QStringLiteral("-nostats"),
+        m_cacheFilePath
+    };
+    m_cacheProcess.start(m_ffmpegPath, arguments);
+
+    if (!m_cacheProcess.waitForStarted(5000)) {
+        setBusy(false);
+        removeCacheFile();
+        fail(QStringLiteral("キャッシュ作成失敗"), m_cacheProcess.errorString());
+    }
+}
+
+void AppController::prepareEncodingAttempts(int videoBitrateKbps)
+{
+    auto argumentsForEncoder = [this, videoBitrateKbps](const QString &encoder) {
         QStringList arguments {QStringLiteral("-y")};
-        if (startMs >= 0) {
-            arguments << QStringLiteral("-ss") << formatTime(startMs);
-        }
-        arguments << QStringLiteral("-i") << m_selectedFilePath;
-        if (startMs >= 0) {
-            arguments << QStringLiteral("-t") << formatTime(endMs - startMs);
-        }
+        arguments << QStringLiteral("-i") << m_encodingInputPath;
         arguments << QStringLiteral("-c:v") << encoder;
         if (encoder == QStringLiteral("libx264")) {
             arguments << QStringLiteral("-preset") << QStringLiteral("medium");
@@ -398,13 +493,13 @@ void AppController::startEncoding(int targetSizeMiB,
                   << QStringLiteral("-movflags") << QStringLiteral("+faststart")
                   << QStringLiteral("-progress") << QStringLiteral("pipe:1")
                   << QStringLiteral("-nostats")
-                  << outputPath;
+                  << m_latestOutputPath;
         return arguments;
     };
 
     m_encodingAttempts.clear();
     m_encodingAttemptLabels.clear();
-    const QStringList hardwareEncoders = preferHardwareEncoder
+    const QStringList hardwareEncoders = m_hardwareEncodingRequested
         ? availableHardwareEncoders()
         : QStringList{};
     for (const QString &encoder : hardwareEncoders) {
@@ -423,10 +518,6 @@ void AppController::startEncoding(int targetSizeMiB,
     m_encodingAttempts.append(argumentsForEncoder(QStringLiteral("libx264")));
     m_encodingAttemptLabels.append(QStringLiteral("CPU"));
     m_currentEncodingAttempt = 0;
-    m_hardwareEncodingRequested = preferHardwareEncoder;
-
-    m_latestOutputPath = outputPath;
-    m_activeDurationMs = durationMs;
     m_progressBuffer.clear();
     startCurrentEncodingAttempt();
 }
@@ -487,6 +578,35 @@ QStringList AppController::availableHardwareEncoders() const
     return available;
 }
 
+void AppController::consumeCacheProgressOutput()
+{
+    m_cacheProgressBuffer += m_cacheProcess.readAllStandardOutput();
+    qsizetype newline = -1;
+    while ((newline = m_cacheProgressBuffer.indexOf('\n')) >= 0) {
+        const QByteArray line = m_cacheProgressBuffer.left(newline).trimmed();
+        m_cacheProgressBuffer.remove(0, newline + 1);
+
+        const qsizetype separator = line.indexOf('=');
+        if (separator <= 0) {
+            continue;
+        }
+        const QByteArray key = line.left(separator);
+        if (key != "out_time_us" && key != "out_time_ms") {
+            continue;
+        }
+
+        bool ok = false;
+        const qint64 microseconds = line.mid(separator + 1).toLongLong(&ok);
+        if (ok && m_activeDurationMs > 0) {
+            const double value = static_cast<double>(microseconds)
+                / (static_cast<double>(m_activeDurationMs) * 1000.0);
+            setProgress(std::clamp(value, 0.0, 1.0));
+            setStatusText(QStringLiteral("無劣化の一時ファイルを作成中: %1%")
+                              .arg(m_progress * 100.0, 0, 'f', 1));
+        }
+    }
+}
+
 void AppController::consumeProgressOutput()
 {
     m_progressBuffer += m_encodeProcess.readAllStandardOutput();
@@ -520,6 +640,15 @@ void AppController::consumeProgressOutput()
             }
         }
     }
+}
+
+void AppController::removeCacheFile()
+{
+    if (m_cacheFilePath.isEmpty()) {
+        return;
+    }
+    QFile::remove(m_cacheFilePath);
+    m_cacheFilePath.clear();
 }
 
 void AppController::setBusy(bool value)

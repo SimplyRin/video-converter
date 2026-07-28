@@ -39,7 +39,8 @@ public:
     Q_INVOKABLE void encode(int targetSizeMiB,
                             qint64 startMs = -1,
                             qint64 endMs = -1,
-                            bool preferHardwareEncoder = false);
+                            bool preferHardwareEncoder = false,
+                            bool deleteCacheAfterEncoding = false);
     Q_INVOKABLE void cancelEncoding();
     Q_INVOKABLE void revealLatestOutput();
 
@@ -64,9 +65,13 @@ private:
                        qint64 endMs,
                        qint64 durationMs,
                        bool preferHardwareEncoder);
+    void startCacheCreation(qint64 startMs, qint64 endMs);
+    void prepareEncodingAttempts(int videoBitrateKbps);
     void startCurrentEncodingAttempt();
     [[nodiscard]] QStringList availableHardwareEncoders() const;
+    void consumeCacheProgressOutput();
     void consumeProgressOutput();
+    void removeCacheFile();
     void setBusy(bool value);
     void setProgress(double value);
     void setStatusText(const QString &value);
@@ -78,17 +83,24 @@ private:
     QString m_ffmpegPath;
     QString m_ffprobePath;
     QString m_latestOutputPath;
+    QString m_cacheFilePath;
+    QString m_encodingInputPath;
     bool m_busy = false;
     double m_progress = 0.0;
     QString m_statusText = QStringLiteral("エンコード！");
     qint64 m_activeDurationMs = 0;
+    int m_pendingVideoBitrateKbps = 0;
+    QByteArray m_cacheProgressBuffer;
+    QByteArray m_cacheErrorBuffer;
     QByteArray m_progressBuffer;
     QList<QStringList> m_encodingAttempts;
     QStringList m_encodingAttemptLabels;
     qsizetype m_currentEncodingAttempt = 0;
     qsizetype m_hardwareEncodingAttemptCount = 0;
     bool m_hardwareEncodingRequested = false;
+    bool m_deleteCacheAfterEncoding = false;
     QString m_activeEncoderLabel;
     QProcess m_probeProcess;
+    QProcess m_cacheProcess;
     QProcess m_encodeProcess;
 };
