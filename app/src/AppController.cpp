@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <objbase.h>
+#include <shlobj.h>
+#endif
+
 #include "AppController.h"
 
 #include <QCoreApplication>
@@ -220,8 +228,28 @@ void AppController::revealLatestOutput()
     }
 
 #ifdef Q_OS_WIN
-    QProcess::startDetached(QStringLiteral("explorer.exe"),
-                            {QStringLiteral("/select,%1").arg(QDir::toNativeSeparators(m_latestOutputPath))});
+    const QString nativePath = QDir::toNativeSeparators(m_latestOutputPath);
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool comAvailable = SUCCEEDED(comResult) || comResult == RPC_E_CHANGED_MODE;
+    HRESULT selectResult = E_FAIL;
+
+    if (comAvailable) {
+        PIDLIST_ABSOLUTE itemIdList = ILCreateFromPathW(
+            reinterpret_cast<PCWSTR>(nativePath.utf16()));
+        if (itemIdList != nullptr) {
+            selectResult = SHOpenFolderAndSelectItems(itemIdList, 0, nullptr, 0);
+            ILFree(itemIdList);
+        }
+    }
+
+    if (SUCCEEDED(comResult)) {
+        CoUninitialize();
+    }
+
+    if (FAILED(selectResult)) {
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                {QStringLiteral("/select,"), nativePath});
+    }
 #elif defined(Q_OS_MACOS)
     QProcess::startDetached(QStringLiteral("/usr/bin/open"),
                             {QStringLiteral("-R"), m_latestOutputPath});

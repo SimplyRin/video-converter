@@ -58,6 +58,11 @@ set_target_properties(discord-video PROPERTIES
 )
 
 if(WIN32)
+    target_link_libraries(discord-video PRIVATE
+        ole32
+        shell32
+    )
+
     set_target_properties(discord-video PROPERTIES OUTPUT_NAME "DiscordVideoApp")
 
     add_executable(discord-video-launcher WIN32
