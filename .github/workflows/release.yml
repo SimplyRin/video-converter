@@ -221,8 +221,6 @@ jobs:
             echo "- Windows x64 portable ZIP (Qt runtime and BtbN GPL FFmpeg included)"
             echo "- Windows x64 installer"
             echo "- macOS arm64 (Qt runtime and GPL FFmpeg included)"
-            echo
-            echo "BUILDNUM is the cumulative number of added lines in commits reachable from this tag."
           } > "${notes_file}"
 
           if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
