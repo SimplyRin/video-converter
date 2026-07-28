@@ -167,7 +167,7 @@ ApplicationWindow {
         CheckBox {
             id: preferHardwareEncoder
             text: "可能であれば GPU エンコードを使用する"
-            checked: false
+            checked: true
 
             ToolTip.visible: hovered
             ToolTip.text: "利用できない場合は自動的に CPU エンコードへ切り替えます。"
