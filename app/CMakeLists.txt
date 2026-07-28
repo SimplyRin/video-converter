@@ -56,6 +56,10 @@ target_link_libraries(discord-video PRIVATE
     Qt6::Widgets
 )
 
+target_compile_definitions(discord-video PRIVATE
+    DISCORDVIDEO_VERSION="${PROJECT_VERSION}"
+)
+
 set_target_properties(discord-video PROPERTIES
     OUTPUT_NAME "DiscordVideo"
     MACOSX_BUNDLE TRUE

@@ -14,6 +14,7 @@ int main(int argc, char *argv[])
     QApplication::setApplicationDisplayName(QStringLiteral("DiscordVideo"));
     QApplication::setOrganizationDomain(QStringLiteral("simplyrin.net"));
     QApplication::setOrganizationName(QStringLiteral("SimplyRin"));
+    QApplication::setApplicationVersion(QStringLiteral(DISCORDVIDEO_VERSION));
 
     QApplication app(argc, argv);
     QQuickStyle::setStyle(QStringLiteral("Fusion"));

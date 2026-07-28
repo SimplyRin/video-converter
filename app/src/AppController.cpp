@@ -16,8 +16,13 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QStandardPaths>
 #include <QUuid>
+#include <QVersionNumber>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -159,6 +164,36 @@ QString AppController::toolStatus() const
         return QStringLiteral("FFmpeg を利用できます。");
     }
     return QStringLiteral("FFmpeg または FFprobe が見つかりません。app/tools/ffmpeg へ配置するか、PATH 設定してください。");
+}
+
+bool AppController::checkingForUpdates() const
+{
+    return m_checkingForUpdates;
+}
+
+bool AppController::updateAvailable() const
+{
+    return m_updateAvailable;
+}
+
+QString AppController::currentVersion() const
+{
+    return QCoreApplication::applicationVersion();
+}
+
+QString AppController::latestVersion() const
+{
+    return m_latestVersion;
+}
+
+QUrl AppController::latestReleaseUrl() const
+{
+    return m_latestReleaseUrl;
+}
+
+QString AppController::updateStatus() const
+{
+    return m_updateStatus;
 }
 
 void AppController::selectFile(const QUrl &url)
@@ -305,6 +340,104 @@ void AppController::revealLatestOutput()
 #else
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(m_latestOutputPath).absolutePath()));
 #endif
+}
+
+void AppController::checkForUpdates()
+{
+    if (m_checkingForUpdates) {
+        return;
+    }
+
+    m_checkingForUpdates = true;
+    m_updateStatus = QStringLiteral("GitHub Releaseを確認中...");
+    emit updateStateChanged();
+
+    QNetworkRequest request(
+        QUrl(QStringLiteral("https://api.github.com/repos/SimplyRin/video-converter/releases/latest")));
+    request.setRawHeader(QByteArrayLiteral("Accept"),
+                         QByteArrayLiteral("application/vnd.github+json"));
+    request.setRawHeader(QByteArrayLiteral("X-GitHub-Api-Version"),
+                         QByteArrayLiteral("2022-11-28"));
+    request.setRawHeader(QByteArrayLiteral("User-Agent"),
+                         QStringLiteral("DiscordVideo/%1").arg(currentVersion()).toUtf8());
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setTransferTimeout(10000);
+
+    QNetworkReply *reply = m_networkManager.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        m_checkingForUpdates = false;
+
+        if (reply->error() != QNetworkReply::NoError) {
+            m_updateStatus = QStringLiteral("アップデートを確認できませんでした。ネットワーク接続を確認してください。");
+            reply->deleteLater();
+            emit updateStateChanged();
+            return;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+        reply->deleteLater();
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            m_updateStatus = QStringLiteral("GitHub Releaseの応答を読み取れませんでした。");
+            emit updateStateChanged();
+            return;
+        }
+
+        const QJsonObject release = document.object();
+        const QString tagName = release.value(QStringLiteral("tag_name")).toString().trimmed();
+        const QUrl releaseUrl(release.value(QStringLiteral("html_url")).toString());
+
+        QString latestVersionText = tagName;
+        if (latestVersionText.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) {
+            latestVersionText.remove(0, 1);
+        }
+        QString currentVersionText = currentVersion().trimmed();
+        if (currentVersionText.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) {
+            currentVersionText.remove(0, 1);
+        }
+
+        qsizetype latestSuffixIndex = 0;
+        qsizetype currentSuffixIndex = 0;
+        const QVersionNumber latest = QVersionNumber::fromString(latestVersionText,
+                                                                 &latestSuffixIndex);
+        const QVersionNumber current = QVersionNumber::fromString(currentVersionText,
+                                                                  &currentSuffixIndex);
+        const bool validVersions = !latest.isNull()
+            && !current.isNull()
+            && latestSuffixIndex == latestVersionText.size()
+            && currentSuffixIndex == currentVersionText.size();
+        const bool validReleaseUrl = releaseUrl.isValid()
+            && releaseUrl.scheme() == QStringLiteral("https")
+            && releaseUrl.host().compare(QStringLiteral("github.com"), Qt::CaseInsensitive) == 0;
+        if (!validVersions || !validReleaseUrl) {
+            m_updateStatus = QStringLiteral("GitHub Releaseのバージョン情報を読み取れませんでした。");
+            emit updateStateChanged();
+            return;
+        }
+
+        m_latestVersion = tagName.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)
+            ? tagName
+            : QStringLiteral("v%1").arg(tagName);
+        m_latestReleaseUrl = releaseUrl;
+        m_updateAvailable = QVersionNumber::compare(latest, current) > 0;
+        if (m_updateAvailable) {
+            m_updateStatus = QStringLiteral("新しいバージョン %1 を利用できます。")
+                                 .arg(m_latestVersion);
+        } else {
+            m_updateStatus = QStringLiteral("最新版を使用しています（v%1）。")
+                                 .arg(currentVersionText);
+        }
+        emit updateStateChanged();
+    });
+}
+
+void AppController::openLatestRelease()
+{
+    const QUrl url = m_latestReleaseUrl.isValid()
+        ? m_latestReleaseUrl
+        : QUrl(QStringLiteral("https://github.com/SimplyRin/video-converter/releases/latest"));
+    QDesktopServices::openUrl(url);
 }
 
 void AppController::locateTools()

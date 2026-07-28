@@ -66,12 +66,60 @@ ApplicationWindow {
             }
 
             Button {
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 24
+                id: informationButton
+                Layout.preferredWidth: 28
+                Layout.preferredHeight: 28
                 text: "i"
                 flat: true
                 font.bold: true
                 onClicked: aboutDialog.open()
+                Accessible.name: backend.updateAvailable
+                                 ? "アップデートがあります。アプリ情報を開く"
+                                 : "アプリ情報を開く"
+
+                property real updatePulse: 0.35
+
+                SequentialAnimation on updatePulse {
+                    running: backend.updateAvailable
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 0.3; to: 0.85; duration: 700; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.85; to: 0.3; duration: 700; easing.type: Easing.InOutSine }
+                }
+
+                background: Rectangle {
+                    radius: width / 2
+                    color: backend.updateAvailable
+                           ? "#ff9800"
+                           : (informationButton.hovered ? root.palette.button : "transparent")
+                    opacity: backend.updateAvailable ? informationButton.updatePulse : 1
+                    border.width: backend.updateAvailable ? 2 : 0
+                    border.color: "#ffc107"
+                }
+
+                contentItem: Label {
+                    text: informationButton.text
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font: informationButton.font
+                    color: root.palette.windowText
+                }
+
+                Rectangle {
+                    width: 8
+                    height: 8
+                    radius: 4
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    color: "#ff5252"
+                    border.width: 1
+                    border.color: root.palette.window
+                    visible: backend.updateAvailable
+                }
+
+                ToolTip.visible: hovered
+                ToolTip.text: backend.updateAvailable
+                              ? backend.latestVersion + " が利用できます"
+                              : (backend.checkingForUpdates ? "アップデートを確認中..." : "アプリ情報")
             }
         }
 
@@ -197,15 +245,73 @@ ApplicationWindow {
     Dialog {
         id: aboutDialog
         anchors.centerIn: parent
-        width: 300
+        width: 350
         modal: true
-        title: "Open Source Info"
+        title: backend.updateAvailable ? "アップデートがあります" : "アプリ情報"
         standardButtons: Dialog.Ok
 
-        contentItem: Label {
-            width: 270
-            wrapMode: Text.WordWrap
-            text: "DiscordVideo\n\nGNU General Public License v3.0 or later\n\nエンコード機能には GPL 版 FFmpeg を使用します。"
+        contentItem: ColumnLayout {
+            width: 320
+            spacing: 10
+
+            Label {
+                Layout.fillWidth: true
+                text: backend.updateAvailable
+                      ? "新しいDiscordVideoを利用できます"
+                      : "DiscordVideo"
+                font.bold: true
+                font.pixelSize: 15
+                wrapMode: Text.WordWrap
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: "現在のバージョン: v" + backend.currentVersion
+                font.pixelSize: 12
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: backend.updateStatus
+                wrapMode: Text.WordWrap
+                color: backend.updateAvailable
+                       ? (aboutDialog.palette.window.hslLightness < 0.5 ? "#ffb74d" : "#e65100")
+                       : aboutDialog.palette.windowText
+            }
+
+            Button {
+                Layout.fillWidth: true
+                text: backend.latestVersion.length > 0
+                      ? backend.latestVersion + " のGitHub Releaseを開く"
+                      : "GitHub Releaseを開く"
+                highlighted: true
+                visible: backend.updateAvailable
+                onClicked: {
+                    backend.openLatestRelease()
+                    aboutDialog.close()
+                }
+            }
+
+            Button {
+                Layout.fillWidth: true
+                text: backend.checkingForUpdates ? "確認中..." : "アップデートを再確認"
+                enabled: !backend.checkingForUpdates
+                onClicked: backend.checkForUpdates()
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: aboutDialog.palette.mid
+            }
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "GNU General Public License v3.0 or later\n\nエンコード機能には GPL 版 FFmpeg を使用します。"
+                font.pixelSize: 11
+                opacity: 0.8
+            }
         }
     }
 
@@ -224,4 +330,6 @@ ApplicationWindow {
             finishedDialog.open()
         }
     }
+
+    Component.onCompleted: backend.checkForUpdates()
 }

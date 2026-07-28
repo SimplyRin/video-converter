@@ -3,6 +3,7 @@
 #pragma once
 
 #include <QList>
+#include <QNetworkAccessManager>
 #include <QObject>
 #include <QProcess>
 #include <QStringList>
@@ -19,6 +20,12 @@ class AppController final : public QObject
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(bool toolsReady READ toolsReady NOTIFY toolsChanged)
     Q_PROPERTY(QString toolStatus READ toolStatus NOTIFY toolsChanged)
+    Q_PROPERTY(bool checkingForUpdates READ checkingForUpdates NOTIFY updateStateChanged)
+    Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY updateStateChanged)
+    Q_PROPERTY(QString currentVersion READ currentVersion NOTIFY updateStateChanged)
+    Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY updateStateChanged)
+    Q_PROPERTY(QUrl latestReleaseUrl READ latestReleaseUrl NOTIFY updateStateChanged)
+    Q_PROPERTY(QString updateStatus READ updateStatus NOTIFY updateStateChanged)
 
 public:
     explicit AppController(QObject *parent = nullptr);
@@ -31,6 +38,12 @@ public:
     [[nodiscard]] QString statusText() const;
     [[nodiscard]] bool toolsReady() const;
     [[nodiscard]] QString toolStatus() const;
+    [[nodiscard]] bool checkingForUpdates() const;
+    [[nodiscard]] bool updateAvailable() const;
+    [[nodiscard]] QString currentVersion() const;
+    [[nodiscard]] QString latestVersion() const;
+    [[nodiscard]] QUrl latestReleaseUrl() const;
+    [[nodiscard]] QString updateStatus() const;
 
     Q_INVOKABLE void selectFile(const QUrl &url);
     Q_INVOKABLE void chooseFile();
@@ -43,6 +56,8 @@ public:
                             bool deleteCacheAfterEncoding = false);
     Q_INVOKABLE void cancelEncoding();
     Q_INVOKABLE void revealLatestOutput();
+    Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE void openLatestRelease();
 
 signals:
     void selectedFileChanged();
@@ -50,6 +65,7 @@ signals:
     void progressChanged();
     void statusTextChanged();
     void toolsChanged();
+    void updateStateChanged();
     void errorOccurred(const QString &title, const QString &message);
     void encodingFinished(const QString &outputPath);
 
@@ -103,4 +119,10 @@ private:
     QProcess m_probeProcess;
     QProcess m_cacheProcess;
     QProcess m_encodeProcess;
+    QNetworkAccessManager m_networkManager;
+    bool m_checkingForUpdates = false;
+    bool m_updateAvailable = false;
+    QString m_latestVersion;
+    QUrl m_latestReleaseUrl;
+    QString m_updateStatus = QStringLiteral("アップデートはまだ確認されていません。");
 };

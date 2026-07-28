@@ -185,7 +185,7 @@ ApplicationWindow {
 
         Label {
             Layout.fillWidth: true
-            text: "一時ファイルは、指定したトリミング範囲を再エンコードせずに保存した無劣化動画です。"
+            text: "一時ファイルは、指定したトリミング範囲を再エンコードせずに保存した無劣化動画です。元動画と同じフォルダーに保存されます。"
             wrapMode: Text.WordWrap
             font.pixelSize: 11
             opacity: 0.75
