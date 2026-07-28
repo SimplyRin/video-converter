@@ -207,7 +207,7 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "起動時に GitHub Releases を非同期で確認します。更新がある場合は、メイン画面の「i」が点灯します。"
+                        text: "起動時に GitHub Releases を確認します。更新がある場合は、メイン画面の「i」が点灯します。"
                         wrapMode: Text.WordWrap
                         color: window.palette.placeholderText
                         font.pixelSize: 11
