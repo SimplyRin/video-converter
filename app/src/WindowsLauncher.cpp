@@ -42,7 +42,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     wchar_t launcherPath[PathCapacity] {};
     const DWORD launcherLength = GetModuleFileNameW(nullptr, launcherPath, PathCapacity);
     if (launcherLength == 0 || launcherLength >= PathCapacity) {
-        showLaunchError(L"DiscordVideoの配置場所を取得できませんでした。");
+        showLaunchError(L"DiscordVideo の配置場所を取得できませんでした。");
         return 1;
     }
 
@@ -51,7 +51,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         --lastSeparator;
     }
     if (lastSeparator == launcherPath) {
-        showLaunchError(L"DiscordVideoの配置場所が正しくありません。");
+        showLaunchError(L"DiscordVideo の配置場所が正しくありません。");
         return 1;
     }
     *lastSeparator = L'\0';
@@ -59,7 +59,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     constexpr wchar_t BinSuffix[] = L"\\bin";
     constexpr wchar_t AppSuffix[] = L"\\DiscordVideoApp.exe";
     if (lstrlenW(launcherPath) + lstrlenW(BinSuffix) + lstrlenW(AppSuffix) + 1 >= PathCapacity) {
-        showLaunchError(L"DiscordVideoの配置パスが長すぎます。");
+        showLaunchError(L"DiscordVideo の配置パスが長すぎます。");
         return 1;
     }
 
@@ -71,7 +71,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     lstrcpyW(applicationPath, binDirectory);
     lstrcatW(applicationPath, AppSuffix);
     if (GetFileAttributesW(applicationPath) == INVALID_FILE_ATTRIBUTES) {
-        showLaunchError(L"bin\\DiscordVideoApp.exeが見つかりません。ZIPをフォルダーごと展開してください。");
+        showLaunchError(L"bin\\DiscordVideoApp.exe が見つかりません。ZIP をフォルダーごと展開してください。");
         return 1;
     }
 
@@ -80,7 +80,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     auto *childCommandLine = static_cast<wchar_t *>(
         HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, commandLineLength * sizeof(wchar_t)));
     if (childCommandLine == nullptr) {
-        showLaunchError(L"DiscordVideoを起動するためのメモリを確保できませんでした。");
+        showLaunchError(L"DiscordVideo を起動するためのメモリを確保できませんでした。");
         return 1;
     }
 
@@ -108,7 +108,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     HeapFree(GetProcessHeap(), 0, childCommandLine);
 
     if (!started) {
-        showLaunchError(L"bin\\DiscordVideoApp.exeを起動できませんでした。ファイル構成を確認してください。");
+        showLaunchError(L"bin\\DiscordVideoApp.exe を起動できませんでした。ファイル構成を確認してください。");
         return 1;
     }
 

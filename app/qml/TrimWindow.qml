@@ -180,7 +180,7 @@ ApplicationWindow {
             enabled: trimWindow.startPosition >= 0 && trimWindow.endPosition >= 0
 
             ToolTip.visible: hovered
-            ToolTip.text: "トリミング範囲を指定した場合に作成される一時MP4が対象です。"
+            ToolTip.text: "トリミング範囲を指定した場合に作成される一時 MP4 が対象です。"
         }
 
         Label {

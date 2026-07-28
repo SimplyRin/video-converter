@@ -14,7 +14,7 @@ ApplicationWindow {
     visible: false
     modality: Qt.ApplicationModal
     flags: Qt.Dialog
-    title: backend.updateAvailable ? "DiscordVideo — アップデートがあります" : "DiscordVideo — アプリ情報"
+    title: backend.updateAvailable ? "DiscordVideo - アップデートがあります" : "DiscordVideo - アプリ情報"
     color: palette.window
 
     function showSection(index) {
@@ -79,7 +79,7 @@ ApplicationWindow {
             Layout.fillWidth: true
 
             TabButton { text: "概要" }
-            TabButton { text: backend.updateAvailable ? "アップデート ●" : "アップデート" }
+            TabButton { text: backend.updateAvailable ? "アップデートあり" : "アップデート" }
             TabButton { text: "ライセンス" }
         }
 
@@ -98,7 +98,7 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "動画を指定したファイルサイズへ変換する、Windows / macOS向けアプリケーションです。"
+                        text: "動画を指定したファイルサイズへ変換する、Windows / macOS 向けアプリケーションです。"
                         wrapMode: Text.WordWrap
                     }
 
@@ -118,7 +118,7 @@ ApplicationWindow {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: "このソフトウェアは無保証で提供され、GNU GPLに従って再配布・変更できます。Qt 6、GPL版FFmpeg、x264を使用しています。詳細は「ライセンス」タブで確認できます。"
+                                text: "このソフトウェアは無保証で提供され、GNU GPL に従って再配布・変更できます。Qt 6、GPL 版 FFmpeg、x264 を使用しています。詳細は「ライセンス」タブで確認できます。"
                                 wrapMode: Text.WordWrap
                                 color: window.palette.placeholderText
                             }
@@ -127,7 +127,7 @@ ApplicationWindow {
 
                     Button {
                         Layout.fillWidth: true
-                        text: "GitHubでソースコードを見る"
+                        text: "GitHub でソースコードを見る"
                         onClicked: backend.openProjectRepository()
                     }
 
@@ -192,8 +192,8 @@ ApplicationWindow {
                     Button {
                         Layout.fillWidth: true
                         text: backend.latestVersion.length > 0
-                              ? backend.latestVersion + " のGitHub Releaseを開く"
-                              : "GitHub Releaseを開く"
+                              ? backend.latestVersion + " の GitHub Release を開く"
+                              : "GitHub Release を開く"
                         highlighted: backend.updateAvailable
                         onClicked: backend.openLatestRelease()
                     }
@@ -207,7 +207,7 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: "起動時にGitHub Releasesを非同期で確認します。更新がある場合は、メイン画面の「i」が点灯します。"
+                        text: "起動時に GitHub Releases を非同期で確認します。更新がある場合は、メイン画面の「i」が点灯します。"
                         wrapMode: Text.WordWrap
                         color: window.palette.placeholderText
                         font.pixelSize: 11
@@ -232,7 +232,7 @@ ApplicationWindow {
                         id: licenseSelector
                         Layout.fillWidth: true
                         model: [
-                            "オープンソースライセンス情報（Qt / FFmpeg / x264）",
+                            "オープンソースライセンス情報 (Qt / FFmpeg / x264)",
                             "GNU General Public License v3"
                         ]
                     }

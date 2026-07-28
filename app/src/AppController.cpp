@@ -272,7 +272,7 @@ void AppController::encode(int targetSizeMiB,
         return;
     }
     if (targetSizeMiB <= 0) {
-        fail(QStringLiteral("構文エラー"), QStringLiteral("目標ファイルサイズには1以上の整数を入力してください。"));
+        fail(QStringLiteral("構文エラー"), QStringLiteral("目標ファイルサイズには 1 以上の整数を入力してください。"));
         return;
     }
 
@@ -368,7 +368,7 @@ void AppController::checkForUpdates()
     }
 
     m_checkingForUpdates = true;
-    m_updateStatus = QStringLiteral("GitHub Releaseを確認中...");
+    m_updateStatus = QStringLiteral("GitHub Release を確認中...");
     emit updateStateChanged();
 
     QNetworkRequest request(
@@ -398,7 +398,7 @@ void AppController::checkForUpdates()
         const QJsonDocument document = QJsonDocument::fromJson(reply->readAll(), &parseError);
         reply->deleteLater();
         if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-            m_updateStatus = QStringLiteral("GitHub Releaseの応答を読み取れませんでした。");
+            m_updateStatus = QStringLiteral("GitHub Release の応答を読み取れませんでした。");
             emit updateStateChanged();
             return;
         }
@@ -430,7 +430,7 @@ void AppController::checkForUpdates()
             && releaseUrl.scheme() == QStringLiteral("https")
             && releaseUrl.host().compare(QStringLiteral("github.com"), Qt::CaseInsensitive) == 0;
         if (!validVersions || !validReleaseUrl) {
-            m_updateStatus = QStringLiteral("GitHub Releaseのバージョン情報を読み取れませんでした。");
+            m_updateStatus = QStringLiteral("GitHub Release のバージョン情報を読み取れませんでした。");
             emit updateStateChanged();
             return;
         }
@@ -444,7 +444,7 @@ void AppController::checkForUpdates()
             m_updateStatus = QStringLiteral("新しいバージョン %1 を利用できます。")
                                  .arg(m_latestVersion);
         } else {
-            m_updateStatus = QStringLiteral("最新版を使用しています（v%1）。")
+            m_updateStatus = QStringLiteral("最新版を使用しています (v%1)。")
                                  .arg(currentVersionText);
         }
         emit updateStateChanged();
@@ -691,9 +691,9 @@ void AppController::startCurrentEncodingAttempt()
     m_activeEncoderLabel = m_encodingAttemptLabels.at(m_currentEncodingAttempt);
     if (m_hardwareEncodingRequested
         && m_currentEncodingAttempt >= m_hardwareEncodingAttemptCount) {
-        setStatusText(QStringLiteral("GPUを利用できないためCPUでエンコード中: 0.0%"));
+        setStatusText(QStringLiteral("GPU を利用できないため CPU でエンコード中: 0.0%"));
     } else {
-        setStatusText(QStringLiteral("エンコード中（%1）: 0.0%").arg(m_activeEncoderLabel));
+        setStatusText(QStringLiteral("エンコード中 (%1): 0.0%").arg(m_activeEncoderLabel));
     }
     m_encodeProcess.start(m_ffmpegPath, m_encodingAttempts.at(m_currentEncodingAttempt));
 
@@ -788,10 +788,10 @@ void AppController::consumeProgressOutput()
                 setProgress(std::clamp(value, 0.0, 1.0));
                 if (m_hardwareEncodingRequested
                     && m_currentEncodingAttempt >= m_hardwareEncodingAttemptCount) {
-                    setStatusText(QStringLiteral("GPUを利用できないためCPUでエンコード中: %1%")
+                    setStatusText(QStringLiteral("GPU を利用できないため CPU でエンコード中: %1%")
                                       .arg(m_progress * 100.0, 0, 'f', 1));
                 } else {
-                    setStatusText(QStringLiteral("エンコード中（%1）: %2%")
+                    setStatusText(QStringLiteral("エンコード中 (%1): %2%")
                                       .arg(m_activeEncoderLabel)
                                       .arg(m_progress * 100.0, 0, 'f', 1));
                 }
