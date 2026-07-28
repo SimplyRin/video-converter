@@ -5,7 +5,7 @@ import QtQuick.Controls.Fusion
 import QtQuick.Layouts
 import QtMultimedia
 
-Window {
+ApplicationWindow {
     id: trimWindow
 
     width: 681
@@ -18,7 +18,7 @@ Window {
     modality: Qt.ApplicationModal
     flags: Qt.Dialog
     title: "動画のトリミング"
-    color: "#f4f4f4"
+    color: palette.window
 
     property int targetSizeMiB: 8
     property double startPosition: -1
@@ -146,7 +146,7 @@ Window {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: "#111111"
-            border.color: "#b8b8b8"
+            border.color: trimWindow.palette.mid
 
             VideoOutput {
                 id: videoOutput
@@ -159,7 +159,7 @@ Window {
         Label {
             id: validationText
             Layout.fillWidth: true
-            color: "#b00020"
+            color: trimWindow.palette.window.hslLightness < 0.5 ? "#ff8a8a" : "#b00020"
             wrapMode: Text.WordWrap
             visible: text.length > 0
         }

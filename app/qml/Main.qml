@@ -15,7 +15,7 @@ ApplicationWindow {
     maximumHeight: 180
     visible: true
     title: "DiscordVideo"
-    color: "#f4f4f4"
+    color: palette.window
 
     function requestEncoding() {
         if (!backend.hasSelectedFile) {
@@ -37,15 +37,6 @@ ApplicationWindow {
         messageDialog.messageText = messageText
         messageDialog.open()
     }
-
-    palette.window: "#f4f4f4"
-    palette.windowText: "#202020"
-    palette.button: "#f5f5f5"
-    palette.buttonText: "#202020"
-    palette.base: "#ffffff"
-    palette.text: "#202020"
-    palette.highlight: "#0096c9"
-    palette.highlightedText: "#ffffff"
 
     DropArea {
         anchors.fill: parent
