@@ -1,0 +1,125 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "DiscordVideo: configure Debug",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-S",
+        ".",
+        "-B",
+        "build/vscode-debug-windows",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+      ],
+      "osx": {
+        "args": [
+          "-S",
+          ".",
+          "-B",
+          "build/vscode-debug-macos",
+          "-G",
+          "Unix Makefiles",
+          "-DCMAKE_BUILD_TYPE=Debug",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/app"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "DiscordVideo: compile Debug",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build/vscode-debug-windows",
+        "--parallel"
+      ],
+      "osx": {
+        "args": [
+          "--build",
+          "build/vscode-debug-macos",
+          "--parallel"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/app"
+      },
+      "problemMatcher": "$gcc",
+      "dependsOn": "DiscordVideo: configure Debug",
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "DiscordVideo: build Debug",
+      "dependsOn": "DiscordVideo: compile Debug",
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "DiscordVideo: configure Release",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-S",
+        ".",
+        "-B",
+        "build/vscode-release-windows",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+      ],
+      "osx": {
+        "args": [
+          "-S",
+          ".",
+          "-B",
+          "build/vscode-release-macos",
+          "-G",
+          "Unix Makefiles",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/app"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "DiscordVideo: compile Release",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "build/vscode-release-windows",
+        "--parallel"
+      ],
+      "osx": {
+        "args": [
+          "--build",
+          "build/vscode-release-macos",
+          "--parallel"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}/app"
+      },
+      "problemMatcher": "$gcc",
+      "dependsOn": "DiscordVideo: configure Release",
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "DiscordVideo: build Release",
+      "dependsOn": "DiscordVideo: compile Release",
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}

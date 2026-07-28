@@ -79,6 +79,10 @@ Window {
                         player.play()
                 }
             }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
 
             Button {
                 text: "開始位置に設定"
@@ -160,6 +164,15 @@ Window {
             visible: text.length > 0
         }
 
+        CheckBox {
+            id: preferHardwareEncoder
+            text: "可能であれば GPU エンコードを使用する"
+            checked: false
+
+            ToolTip.visible: hovered
+            ToolTip.text: "利用できない場合は自動的に CPU エンコードへ切り替えます。"
+        }
+
         RowLayout {
             Layout.fillWidth: true
 
@@ -188,7 +201,8 @@ Window {
                     player.stop()
                     backend.encode(trimWindow.targetSizeMiB,
                                    hasStart ? Math.round(trimWindow.startPosition) : -1,
-                                   hasEnd ? Math.round(trimWindow.endPosition) : -1)
+                                   hasEnd ? Math.round(trimWindow.endPosition) : -1,
+                                   preferHardwareEncoder.checked)
                     trimWindow.close()
                 }
             }

@@ -2,8 +2,10 @@
 
 #pragma once
 
+#include <QList>
 #include <QObject>
 #include <QProcess>
+#include <QStringList>
 #include <QUrl>
 
 class AppController final : public QObject
@@ -34,7 +36,10 @@ public:
     Q_INVOKABLE void chooseFile();
     Q_INVOKABLE void clearSelectedFile();
     Q_INVOKABLE void refreshTools();
-    Q_INVOKABLE void encode(int targetSizeMiB, qint64 startMs = -1, qint64 endMs = -1);
+    Q_INVOKABLE void encode(int targetSizeMiB,
+                            qint64 startMs = -1,
+                            qint64 endMs = -1,
+                            bool preferHardwareEncoder = false);
     Q_INVOKABLE void cancelEncoding();
     Q_INVOKABLE void revealLatestOutput();
 
@@ -50,8 +55,17 @@ signals:
 private:
     void locateTools();
     [[nodiscard]] QString locateTool(const QString &baseName) const;
-    void probeDuration(int targetSizeMiB, qint64 startMs, qint64 endMs);
-    void startEncoding(int targetSizeMiB, qint64 startMs, qint64 endMs, qint64 durationMs);
+    void probeDuration(int targetSizeMiB,
+                       qint64 startMs,
+                       qint64 endMs,
+                       bool preferHardwareEncoder);
+    void startEncoding(int targetSizeMiB,
+                       qint64 startMs,
+                       qint64 endMs,
+                       qint64 durationMs,
+                       bool preferHardwareEncoder);
+    void startCurrentEncodingAttempt();
+    [[nodiscard]] QStringList availableHardwareEncoders() const;
     void consumeProgressOutput();
     void setBusy(bool value);
     void setProgress(double value);
@@ -69,6 +83,12 @@ private:
     QString m_statusText = QStringLiteral("エンコード！");
     qint64 m_activeDurationMs = 0;
     QByteArray m_progressBuffer;
+    QList<QStringList> m_encodingAttempts;
+    QStringList m_encodingAttemptLabels;
+    qsizetype m_currentEncodingAttempt = 0;
+    qsizetype m_hardwareEncodingAttemptCount = 0;
+    bool m_hardwareEncodingRequested = false;
+    QString m_activeEncoderLabel;
     QProcess m_probeProcess;
     QProcess m_encodeProcess;
 };

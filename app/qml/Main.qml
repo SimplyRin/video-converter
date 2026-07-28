@@ -136,7 +136,7 @@ ApplicationWindow {
                 Layout.preferredHeight: 30
                 enabled: !backend.busy
                 horizontalAlignment: TextInput.AlignRight
-                placeholderText: "8"
+                placeholderText: "10"
                 inputMethodHints: Qt.ImhDigitsOnly
                 validator: IntValidator { bottom: 1; top: 99999 }
                 font.pixelSize: 12

@@ -73,6 +73,12 @@ if ($LASTEXITCODE -ne 0 -or -not $x264Encoder) {
     throw "Bundled FFmpeg could not be executed or does not contain libx264"
 }
 
+$hardwareEncoders = & (Join-Path $ffmpegRoot "ffmpeg.exe") -hide_banner -encoders 2>&1 |
+    Select-String "h264_(nvenc|qsv|amf)"
+if ($LASTEXITCODE -ne 0 -or -not $hardwareEncoders) {
+    throw "Bundled FFmpeg does not contain a supported Windows GPU encoder"
+}
+
 $objdump = Join-Path $env:IQTA_TOOLS "mingw1310_64/bin/objdump.exe"
 if (-not (Test-Path $objdump)) {
     throw "MinGW objdump.exe was not found"

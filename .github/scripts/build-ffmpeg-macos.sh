@@ -54,6 +54,7 @@ tar -C "${work_root}" -xf "${ffmpeg_archive}"
         --enable-gpl \
         --enable-version3 \
         --enable-libx264 \
+        --enable-videotoolbox \
         --enable-static \
         --disable-shared \
         --disable-autodetect \
@@ -77,4 +78,5 @@ if otool -L "${output_dir}/ffmpeg" "${output_dir}/ffprobe" | grep -F "${work_roo
 fi
 
 "${output_dir}/ffmpeg" -hide_banner -encoders | grep -F libx264
+"${output_dir}/ffmpeg" -hide_banner -encoders | grep -F h264_videotoolbox
 "${output_dir}/ffprobe" -version | sed -n '1p'

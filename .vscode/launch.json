@@ -1,0 +1,47 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "DiscordVideo (Debug)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/build/vscode-debug-macos/DiscordVideo.app/Contents/MacOS/DiscordVideo",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "preLaunchTask": "DiscordVideo: build Debug",
+      "windows": {
+        "program": "${workspaceFolder}/app/build/vscode-debug-windows/DiscordVideoApp.exe",
+        "MIMode": "gdb"
+      },
+      "osx": {
+        "program": "${workspaceFolder}/app/build/vscode-debug-macos/DiscordVideo.app/Contents/MacOS/DiscordVideo",
+        "MIMode": "lldb"
+      }
+    },
+    {
+      "name": "DiscordVideo (Release)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/build/vscode-release-macos/DiscordVideo.app/Contents/MacOS/DiscordVideo",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "lldb",
+      "preLaunchTask": "DiscordVideo: build Release",
+      "windows": {
+        "program": "${workspaceFolder}/app/build/vscode-release-windows/DiscordVideoApp.exe",
+        "MIMode": "gdb"
+      },
+      "osx": {
+        "program": "${workspaceFolder}/app/build/vscode-release-macos/DiscordVideo.app/Contents/MacOS/DiscordVideo",
+        "MIMode": "lldb"
+      }
+    }
+  ]
+}

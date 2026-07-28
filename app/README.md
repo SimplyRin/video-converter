@@ -24,6 +24,10 @@ cmake --build app/build --config Release
 
 Qt Creator では `app/CMakeLists.txt` を直接開けます。
 
+VS Codeでは推奨拡張機能をインストール後、`DiscordVideo (Debug)`または
+`DiscordVideo (Release)`を選んで`F5`を押すと、選択した構成のConfigure、Build、起動を続けて
+実行できます。ビルド成果物は`app/build/vscode-{debug,release}-{windows,macos}/`に作成します。
+
 ## FFmpeg
 
 アプリは次の順にFFmpegとFFprobeを検索します。
@@ -52,5 +56,7 @@ Windows版はルートの`DiscordVideo.exe`を起動します。これは外部D
 - 再生、一時停止、シーク、トリミング範囲指定
 - FFprobe による動画時間取得
 - libx264 / AAC による MP4 エンコード
+- WindowsのNVENC、Quick Sync、AMFおよびmacOSのVideoToolboxによる任意のGPUエンコード
+- GPUエンコードを利用できない場合のlibx264への自動フォールバック
 - FFmpeg の進捗表示とキャンセル
 - Windows Explorer / macOS Finder での出力ファイル表示

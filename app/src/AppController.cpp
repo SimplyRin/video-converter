@@ -41,17 +41,27 @@ AppController::AppController(QObject *parent)
                 }
 
                 const bool succeeded = exitStatus == QProcess::NormalExit && exitCode == 0;
-                setBusy(false);
                 if (!succeeded) {
                     if (!m_latestOutputPath.isEmpty()) {
                         QFile::remove(m_latestOutputPath);
                     }
+
+                    if (m_currentEncodingAttempt + 1 < m_encodingAttempts.size()) {
+                        ++m_currentEncodingAttempt;
+                        setProgress(0.0);
+                        m_progressBuffer.clear();
+                        startCurrentEncodingAttempt();
+                        return;
+                    }
+
+                    setBusy(false);
                     setStatusText(QStringLiteral("エンコード！"));
                     emit errorOccurred(QStringLiteral("エンコード失敗"),
                                        QStringLiteral("FFmpeg が正常に終了しませんでした。"));
                     return;
                 }
 
+                setBusy(false);
                 setProgress(1.0);
                 setStatusText(QStringLiteral("完了"));
                 emit encodingFinished(m_latestOutputPath);
@@ -148,7 +158,10 @@ void AppController::refreshTools()
     locateTools();
 }
 
-void AppController::encode(int targetSizeMiB, qint64 startMs, qint64 endMs)
+void AppController::encode(int targetSizeMiB,
+                           qint64 startMs,
+                           qint64 endMs,
+                           bool preferHardwareEncoder)
 {
     if (m_busy) {
         return;
@@ -173,7 +186,7 @@ void AppController::encode(int targetSizeMiB, qint64 startMs, qint64 endMs)
     }
 
     m_latestOutputPath.clear();
-    probeDuration(targetSizeMiB, startMs, endMs);
+    probeDuration(targetSizeMiB, startMs, endMs, preferHardwareEncoder);
 }
 
 void AppController::cancelEncoding()
@@ -196,6 +209,8 @@ void AppController::cancelEncoding()
     }
     setProgress(0.0);
     setStatusText(QStringLiteral("エンコード！"));
+    m_encodingAttempts.clear();
+    m_encodingAttemptLabels.clear();
 }
 
 void AppController::revealLatestOutput()
@@ -248,7 +263,10 @@ QString AppController::locateTool(const QString &baseName) const
     return QStandardPaths::findExecutable(fileName);
 }
 
-void AppController::probeDuration(int targetSizeMiB, qint64 startMs, qint64 endMs)
+void AppController::probeDuration(int targetSizeMiB,
+                                  qint64 startMs,
+                                  qint64 endMs,
+                                  bool preferHardwareEncoder)
 {
     setBusy(true);
     setProgress(0.0);
@@ -258,7 +276,8 @@ void AppController::probeDuration(int targetSizeMiB, qint64 startMs, qint64 endM
     connect(&m_probeProcess,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
             this,
-            [this, targetSizeMiB, startMs, endMs](int exitCode, QProcess::ExitStatus exitStatus) {
+            [this, targetSizeMiB, startMs, endMs, preferHardwareEncoder](int exitCode,
+                                                                         QProcess::ExitStatus exitStatus) {
                 disconnect(&m_probeProcess, nullptr, this, nullptr);
                 if (exitStatus != QProcess::NormalExit || exitCode != 0) {
                     setBusy(false);
@@ -277,7 +296,11 @@ void AppController::probeDuration(int targetSizeMiB, qint64 startMs, qint64 endM
                     return;
                 }
 
-                startEncoding(targetSizeMiB, startMs, endMs, durationMs);
+                startEncoding(targetSizeMiB,
+                              startMs,
+                              endMs,
+                              durationMs,
+                              preferHardwareEncoder);
             },
             Qt::SingleShotConnection);
 
@@ -294,7 +317,11 @@ void AppController::probeDuration(int targetSizeMiB, qint64 startMs, qint64 endM
     }
 }
 
-void AppController::startEncoding(int targetSizeMiB, qint64 startMs, qint64 endMs, qint64 durationMs)
+void AppController::startEncoding(int targetSizeMiB,
+                                  qint64 startMs,
+                                  qint64 endMs,
+                                  qint64 durationMs,
+                                  bool preferHardwareEncoder)
 {
     const double durationSeconds = static_cast<double>(durationMs) / 1000.0;
     const double targetBits = static_cast<double>(targetSizeMiB) * 1'000'000.0 * 8.0;
@@ -317,37 +344,119 @@ void AppController::startEncoding(int targetSizeMiB, qint64 startMs, qint64 endM
         return;
     }
 
-    QStringList arguments {QStringLiteral("-y")};
-    if (startMs >= 0) {
-        arguments << QStringLiteral("-ss") << formatTime(startMs);
+    auto argumentsForEncoder = [this,
+                                startMs,
+                                endMs,
+                                videoBitrateKbps,
+                                outputPath](const QString &encoder) {
+        QStringList arguments {QStringLiteral("-y")};
+        if (startMs >= 0) {
+            arguments << QStringLiteral("-ss") << formatTime(startMs);
+        }
+        arguments << QStringLiteral("-i") << m_selectedFilePath;
+        if (startMs >= 0) {
+            arguments << QStringLiteral("-t") << formatTime(endMs - startMs);
+        }
+        arguments << QStringLiteral("-c:v") << encoder;
+        if (encoder == QStringLiteral("libx264")) {
+            arguments << QStringLiteral("-preset") << QStringLiteral("medium");
+        }
+        arguments << QStringLiteral("-b:v") << QStringLiteral("%1k").arg(videoBitrateKbps)
+                  << QStringLiteral("-maxrate") << QStringLiteral("%1k").arg(videoBitrateKbps + 5)
+                  << QStringLiteral("-bufsize") << QStringLiteral("%1k").arg(videoBitrateKbps * 2)
+                  << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p")
+                  << QStringLiteral("-c:a") << QStringLiteral("aac")
+                  << QStringLiteral("-b:a") << QStringLiteral("%1k").arg(audioBitrateKbps)
+                  << QStringLiteral("-movflags") << QStringLiteral("+faststart")
+                  << QStringLiteral("-progress") << QStringLiteral("pipe:1")
+                  << QStringLiteral("-nostats")
+                  << outputPath;
+        return arguments;
+    };
+
+    m_encodingAttempts.clear();
+    m_encodingAttemptLabels.clear();
+    const QStringList hardwareEncoders = preferHardwareEncoder
+        ? availableHardwareEncoders()
+        : QStringList{};
+    for (const QString &encoder : hardwareEncoders) {
+        m_encodingAttempts.append(argumentsForEncoder(encoder));
+        if (encoder == QStringLiteral("h264_nvenc")) {
+            m_encodingAttemptLabels.append(QStringLiteral("NVIDIA GPU"));
+        } else if (encoder == QStringLiteral("h264_qsv")) {
+            m_encodingAttemptLabels.append(QStringLiteral("Intel GPU"));
+        } else if (encoder == QStringLiteral("h264_amf")) {
+            m_encodingAttemptLabels.append(QStringLiteral("AMD GPU"));
+        } else {
+            m_encodingAttemptLabels.append(QStringLiteral("Apple VideoToolbox"));
+        }
     }
-    arguments << QStringLiteral("-i") << m_selectedFilePath;
-    if (startMs >= 0) {
-        arguments << QStringLiteral("-t") << formatTime(endMs - startMs);
-    }
-    arguments << QStringLiteral("-c:v") << QStringLiteral("libx264")
-              << QStringLiteral("-preset") << QStringLiteral("medium")
-              << QStringLiteral("-b:v") << QStringLiteral("%1k").arg(videoBitrateKbps)
-              << QStringLiteral("-maxrate") << QStringLiteral("%1k").arg(videoBitrateKbps + 5)
-              << QStringLiteral("-bufsize") << QStringLiteral("%1k").arg(videoBitrateKbps * 2)
-              << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p")
-              << QStringLiteral("-c:a") << QStringLiteral("aac")
-              << QStringLiteral("-b:a") << QStringLiteral("%1k").arg(audioBitrateKbps)
-              << QStringLiteral("-movflags") << QStringLiteral("+faststart")
-              << QStringLiteral("-progress") << QStringLiteral("pipe:1")
-              << QStringLiteral("-nostats")
-              << outputPath;
+    m_hardwareEncodingAttemptCount = m_encodingAttempts.size();
+    m_encodingAttempts.append(argumentsForEncoder(QStringLiteral("libx264")));
+    m_encodingAttemptLabels.append(QStringLiteral("CPU"));
+    m_currentEncodingAttempt = 0;
+    m_hardwareEncodingRequested = preferHardwareEncoder;
 
     m_latestOutputPath = outputPath;
     m_activeDurationMs = durationMs;
     m_progressBuffer.clear();
-    setStatusText(QStringLiteral("エンコード中: 0.0%"));
-    m_encodeProcess.start(m_ffmpegPath, arguments);
+    startCurrentEncodingAttempt();
+}
+
+void AppController::startCurrentEncodingAttempt()
+{
+    if (m_currentEncodingAttempt >= m_encodingAttempts.size()) {
+        setBusy(false);
+        fail(QStringLiteral("エンコード失敗"), QStringLiteral("利用できるエンコーダーがありません。"));
+        return;
+    }
+
+    m_activeEncoderLabel = m_encodingAttemptLabels.at(m_currentEncodingAttempt);
+    if (m_hardwareEncodingRequested
+        && m_currentEncodingAttempt >= m_hardwareEncodingAttemptCount) {
+        setStatusText(QStringLiteral("GPUを利用できないためCPUでエンコード中: 0.0%"));
+    } else {
+        setStatusText(QStringLiteral("エンコード中（%1）: 0.0%").arg(m_activeEncoderLabel));
+    }
+    m_encodeProcess.start(m_ffmpegPath, m_encodingAttempts.at(m_currentEncodingAttempt));
 
     if (!m_encodeProcess.waitForStarted(5000)) {
         setBusy(false);
         fail(QStringLiteral("FFmpeg 起動失敗"), m_encodeProcess.errorString());
     }
+}
+
+QStringList AppController::availableHardwareEncoders() const
+{
+    QProcess encoderProbe;
+    encoderProbe.setProcessChannelMode(QProcess::MergedChannels);
+    encoderProbe.start(m_ffmpegPath,
+                       {QStringLiteral("-hide_banner"), QStringLiteral("-encoders")});
+    if (!encoderProbe.waitForStarted(3000) || !encoderProbe.waitForFinished(10000)) {
+        encoderProbe.kill();
+        encoderProbe.waitForFinished(1000);
+        return {};
+    }
+
+    const QByteArray encoderList = encoderProbe.readAllStandardOutput();
+    QStringList candidates;
+#ifdef Q_OS_WIN
+    candidates << QStringLiteral("h264_nvenc")
+               << QStringLiteral("h264_qsv")
+               << QStringLiteral("h264_amf");
+#elif defined(Q_OS_MACOS)
+    candidates << QStringLiteral("h264_videotoolbox");
+#endif
+
+    QStringList available;
+    for (const QString &candidate : candidates) {
+        if (encoderList.contains((QByteArrayLiteral(" ")
+                                  + candidate.toUtf8()
+                                  + QByteArrayLiteral(" ")))) {
+            available.append(candidate);
+        }
+    }
+    return available;
 }
 
 void AppController::consumeProgressOutput()
@@ -371,7 +480,15 @@ void AppController::consumeProgressOutput()
                 const double value = static_cast<double>(microseconds)
                     / (static_cast<double>(m_activeDurationMs) * 1000.0);
                 setProgress(std::clamp(value, 0.0, 1.0));
-                setStatusText(QStringLiteral("エンコード中: %1%").arg(m_progress * 100.0, 0, 'f', 1));
+                if (m_hardwareEncodingRequested
+                    && m_currentEncodingAttempt >= m_hardwareEncodingAttemptCount) {
+                    setStatusText(QStringLiteral("GPUを利用できないためCPUでエンコード中: %1%")
+                                      .arg(m_progress * 100.0, 0, 'f', 1));
+                } else {
+                    setStatusText(QStringLiteral("エンコード中（%1）: %2%")
+                                      .arg(m_activeEncoderLabel)
+                                      .arg(m_progress * 100.0, 0, 'f', 1));
+                }
             }
         }
     }
