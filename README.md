@@ -50,3 +50,9 @@ Windowsではルートディレクトリの`DiscordVideo.exe`を起動してく�
 
 WindowsのSetup版は、Program Filesへのインストール、スタートメニュー登録、任意のデスクトップ
 ショートカット作成、アンインストールに対応します。ポータブルZIP版も引き続き公開します。
+
+### ブランチの手動ビルド
+
+GitHubのActions画面で`Build and release`を開き、`Run workflow`から対象ブランチとテスト用
+バージョンを選択すると、そのブランチをビルドできます。手動実行ではGitHub Releaseを作成せず、
+WindowsポータブルZIP、Windows Setup、macOS ZIPをActionsのArtifactsへアップロードします。

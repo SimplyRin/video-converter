@@ -4,16 +4,23 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Artifact version (MAJOR.MINOR.FIX)"
+        required: true
+        default: "0.0.0"
+        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   QT_VERSION: "6.8.3"
 
 jobs:
   metadata:
-    name: Release metadata
+    name: Build metadata
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.metadata.outputs.version }}
@@ -26,14 +33,20 @@ jobs:
       - id: metadata
         name: Calculate version and build number
         shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          if [[ ! "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "Unsupported tag: ${tag}" >&2
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${DISPATCH_VERSION}"
+          fi
+
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unsupported version: ${version}" >&2
             exit 1
           fi
 
-          version="${tag#v}"
           build_number="$(bash .github/scripts/calculate-build-number.sh "${GITHUB_SHA}")"
           if [[ "${build_number}" -le 0 ]]; then
             echo "The calculated build number is invalid: ${build_number}" >&2
@@ -42,7 +55,7 @@ jobs:
 
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
-          echo "Release version: ${version}+${build_number}"
+          echo "Build version: ${version}+${build_number}"
 
   windows:
     name: Windows x64
@@ -175,7 +188,10 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [metadata, windows, macos]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.metadata.outputs.version }}
