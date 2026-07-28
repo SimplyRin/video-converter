@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <QApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -16,6 +17,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/DiscordVideo.ico")));
 
     AppController controller;
     QQmlApplicationEngine engine;

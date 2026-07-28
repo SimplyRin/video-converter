@@ -35,6 +35,7 @@ $env:DISCORDVIDEO_INSTALLER_VERSION = $Version
 $env:DISCORDVIDEO_INSTALLER_BUILD_NUMBER = $BuildNumber
 $env:DISCORDVIDEO_INSTALLER_PACKAGE_SOURCE = $packageSource
 $env:DISCORDVIDEO_INSTALLER_OUTPUT = (Resolve-Path $OutputDirectory).Path
+$env:DISCORDVIDEO_INSTALLER_ICON = (Resolve-Path (Join-Path $repoRoot "app/assets/DiscordVideo.ico")).Path
 
 try {
     & $iscc $installerScript
@@ -46,6 +47,7 @@ try {
     Remove-Item Env:DISCORDVIDEO_INSTALLER_BUILD_NUMBER -ErrorAction SilentlyContinue
     Remove-Item Env:DISCORDVIDEO_INSTALLER_PACKAGE_SOURCE -ErrorAction SilentlyContinue
     Remove-Item Env:DISCORDVIDEO_INSTALLER_OUTPUT -ErrorAction SilentlyContinue
+    Remove-Item Env:DISCORDVIDEO_INSTALLER_ICON -ErrorAction SilentlyContinue
 }
 
 if (-not (Test-Path $expectedInstaller)) {

@@ -16,6 +16,13 @@ mkdir -p "${package_root}" "${output_dir}"
 ditto "${app_source}" "${app_bundle}"
 mkdir -p "${ffmpeg_dir}"
 
+icon_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${app_bundle}/Contents/Info.plist")"
+if [[ "${icon_name}" != "DiscordVideo.icns" \
+    || ! -f "${app_bundle}/Contents/Resources/${icon_name}" ]]; then
+    echo "The macOS application icon is missing from the app bundle." >&2
+    exit 1
+fi
+
 bash "${repo_root}/.github/scripts/build-ffmpeg-macos.sh" "${ffmpeg_dir}"
 
 cp "${repo_root}/LICENSE.md" "${package_root}/LICENSE.md"

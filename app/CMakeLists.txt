@@ -28,6 +28,15 @@ qt_add_executable(discord-video
     src/AppController.h
 )
 
+set(DISCORDVIDEO_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/assets/DiscordVideo.ico")
+set_source_files_properties("${DISCORDVIDEO_ICON_ICO}" PROPERTIES
+    QT_RESOURCE_ALIAS "DiscordVideo.ico"
+)
+qt_add_resources(discord-video "discordvideo_icons"
+    PREFIX "/icons"
+    FILES "${DISCORDVIDEO_ICON_ICO}"
+)
+
 qt_add_qml_module(discord-video
     URI DiscordVideo
     VERSION 1.0
@@ -57,7 +66,27 @@ set_target_properties(discord-video PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
+if(APPLE)
+    set(DISCORDVIDEO_ICON_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/assets/DiscordVideo.icns")
+    set_source_files_properties("${DISCORDVIDEO_ICON_ICNS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
+    target_sources(discord-video PRIVATE "${DISCORDVIDEO_ICON_ICNS}")
+    set_target_properties(discord-video PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE "DiscordVideo.icns"
+    )
+endif()
+
 if(WIN32)
+    enable_language(RC)
+    set(DISCORDVIDEO_WINDOWS_ICON "${DISCORDVIDEO_ICON_ICO}")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/DiscordVideo.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/DiscordVideo.rc"
+        @ONLY
+    )
+    target_sources(discord-video PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/DiscordVideo.rc")
+
     target_link_libraries(discord-video PRIVATE
         ole32
         shell32
@@ -67,6 +96,7 @@ if(WIN32)
 
     add_executable(discord-video-launcher WIN32
         src/WindowsLauncher.cpp
+        "${CMAKE_CURRENT_BINARY_DIR}/DiscordVideo.rc"
     )
     set_target_properties(discord-video-launcher PROPERTIES
         OUTPUT_NAME "DiscordVideo"

@@ -4,6 +4,7 @@
 #define BuildNumber GetEnv("DISCORDVIDEO_INSTALLER_BUILD_NUMBER")
 #define PackageSource GetEnv("DISCORDVIDEO_INSTALLER_PACKAGE_SOURCE")
 #define InstallerOutput GetEnv("DISCORDVIDEO_INSTALLER_OUTPUT")
+#define InstallerIcon GetEnv("DISCORDVIDEO_INSTALLER_ICON")
 
 [Setup]
 AppId={{D046999A-1929-443F-9DB2-25E0A52024A4}
@@ -19,6 +20,7 @@ DisableProgramGroupPage=yes
 LicenseFile={#PackageSource}\LICENSE.md
 OutputDir={#InstallerOutput}
 OutputBaseFilename=Windows-x64-Setup_v{#AppVersion}+{#BuildNumber}
+SetupIconFile={#InstallerIcon}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern dynamic
