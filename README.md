@@ -19,9 +19,10 @@ Qt版はWebViewとXMLを使用しません。画面はQML、アプリケーシ�
 ## リリース
 
 `vMAJOR.MINOR.FIX`形式のタグをpushすると、GitHub ActionsがWindows x64版とmacOS arm64版を
-ビルドし、同じタグのGitHub Releaseへ次の2ファイルを公開します。
+ビルドし、同じタグのGitHub Releaseへ次の3ファイルを公開します。
 
 - `Windows-x64_vMAJOR.MINOR.FIX+BUILDNUM.zip`
+- `Windows-x64-Setup_vMAJOR.MINOR.FIX+BUILDNUM.exe`
 - `macOS-arm64_vMAJOR.MINOR.FIX+BUILDNUM.zip`
 
 `BUILDNUM`は、タグのコミットから辿れる全コミットについて、Gitのnumstatに記録された追加行数を
@@ -30,3 +31,22 @@ Qt版はWebViewとXMLを使用しません。画面はQML、アプリケーシ�
 両方のZIPにQtランタイム、FFmpeg、FFprobe、ライセンス情報を同梱します。Windows版のGPL
 FFmpegはBtbN/FFmpeg-Buildsから取得します。BtbNはmacOSバイナリを提供していないため、macOS版は
 Actionsのarm64ランナー上でFFmpegとx264をソースからビルドします。
+
+Windows版の実行ファイルとランタイムは、ZIP内で次のように`bin/`へまとめています。
+
+```text
+DiscordVideo/
+├── DiscordVideo.exe（起動用）
+├── bin/
+│   ├── DiscordVideoApp.exe
+│   ├── Qt6*.dll
+│   ├── platforms、qmlなどのQtランタイム
+│   └── tools/ffmpeg/（ffmpeg.exe、ffprobe.exe）
+├── LICENSE.md
+└── THIRD_PARTY_NOTICES.md
+```
+
+Windowsではルートディレクトリの`DiscordVideo.exe`を起動してください。
+
+WindowsのSetup版は、Program Filesへのインストール、スタートメニュー登録、任意のデスクトップ
+ショートカット作成、アンインストールに対応します。ポータブルZIP版も引き続き公開します。

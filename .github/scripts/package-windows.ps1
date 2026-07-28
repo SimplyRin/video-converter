@@ -7,28 +7,38 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $packageRoot = Join-Path $env:RUNNER_TEMP "package/DiscordVideo"
-$ffmpegRoot = Join-Path $packageRoot "tools/ffmpeg"
+$binRoot = Join-Path $packageRoot "bin"
+$ffmpegRoot = Join-Path $binRoot "tools/ffmpeg"
 $ffmpegArchive = Join-Path $env:RUNNER_TEMP "ffmpeg-win64-gpl.zip"
 $ffmpegExtract = Join-Path $env:RUNNER_TEMP "ffmpeg-win64-gpl"
 $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip"
-$applicationCandidates = @(
+$launcherCandidates = @(
     (Join-Path $repoRoot "build/windows/Release/DiscordVideo.exe"),
     (Join-Path $repoRoot "build/windows/DiscordVideo.exe")
 )
+$applicationCandidates = @(
+    (Join-Path $repoRoot "build/windows/Release/DiscordVideoApp.exe"),
+    (Join-Path $repoRoot "build/windows/DiscordVideoApp.exe")
+)
+$launcher = $launcherCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 $application = $applicationCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $launcher) {
+    throw "DiscordVideo launcher was not found in the Windows build directory"
+}
 if (-not $application) {
-    throw "DiscordVideo.exe was not found in the Windows build directory"
+    throw "DiscordVideoApp.exe was not found in the Windows build directory"
 }
 
-New-Item -ItemType Directory -Force -Path $packageRoot, $ffmpegRoot, $OutputDirectory | Out-Null
-Copy-Item $application $packageRoot
+New-Item -ItemType Directory -Force -Path $packageRoot, $binRoot, $ffmpegRoot, $OutputDirectory | Out-Null
+Copy-Item $launcher $packageRoot
+Copy-Item $application $binRoot
 
 & windeployqt `
     --release `
     --compiler-runtime `
     --no-translations `
     --qmldir (Join-Path $repoRoot "app/qml") `
-    (Join-Path $packageRoot "DiscordVideo.exe")
+    (Join-Path $binRoot "DiscordVideoApp.exe")
 if ($LASTEXITCODE -ne 0) {
     throw "windeployqt failed with exit code $LASTEXITCODE"
 }
@@ -61,6 +71,29 @@ $x264Encoder = & (Join-Path $ffmpegRoot "ffmpeg.exe") -hide_banner -encoders 2>&
     Select-String "libx264"
 if ($LASTEXITCODE -ne 0 -or -not $x264Encoder) {
     throw "Bundled FFmpeg could not be executed or does not contain libx264"
+}
+
+$objdump = Join-Path $env:IQTA_TOOLS "mingw1310_64/bin/objdump.exe"
+if (-not (Test-Path $objdump)) {
+    throw "MinGW objdump.exe was not found"
+}
+$launcherImports = & $objdump -p (Join-Path $packageRoot "DiscordVideo.exe") 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not inspect the DiscordVideo launcher imports"
+}
+$externalLauncherRuntime = $launcherImports |
+    Select-String -Pattern "Qt6|libgcc|libstdc\+\+|libwinpthread"
+if ($externalLauncherRuntime) {
+    throw "The DiscordVideo launcher unexpectedly depends on a bundled runtime DLL: $externalLauncherRuntime"
+}
+
+$unexpectedRuntimeFilesAtPackageRoot = Get-ChildItem $packageRoot -File |
+    Where-Object {
+        $_.Extension -eq ".dll" -or
+        ($_.Extension -eq ".exe" -and $_.Name -ne "DiscordVideo.exe")
+    }
+if ($unexpectedRuntimeFilesAtPackageRoot) {
+    throw "Unexpected executable or DLL files were placed outside the bin directory"
 }
 
 $assetPath = Join-Path $OutputDirectory "Windows-x64_v$Version+$BuildNumber.zip"

@@ -41,6 +41,9 @@ GitHub Actionsが作成するリリースZIPでは、実行ファイルを基準
 FFmpegとFFprobeを配置済みです。Windows x64版はBtbN/FFmpeg-Buildsを使用し、macOS arm64版は
 FFmpeg 8.1.2とx264をリリース処理内でビルドします。
 
+Windows版はルートの`DiscordVideo.exe`を起動します。これは外部DLLに依存しない小さなランチャーで、
+`bin/DiscordVideoApp.exe`を起動します。Qt DLL、Qtプラグイン、QML、FFmpegはすべて`bin/`にまとめます。
+
 ## 実装済み機能
 
 - ファイル選択とドラッグ＆ドロップ

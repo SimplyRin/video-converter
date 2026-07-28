@@ -57,8 +57,32 @@ set_target_properties(discord-video PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
+if(WIN32)
+    set_target_properties(discord-video PROPERTIES OUTPUT_NAME "DiscordVideoApp")
+
+    add_executable(discord-video-launcher WIN32
+        src/WindowsLauncher.cpp
+    )
+    set_target_properties(discord-video-launcher PROPERTIES
+        OUTPUT_NAME "DiscordVideo"
+    )
+    if(MINGW)
+        target_link_options(discord-video-launcher PRIVATE
+            -static
+            -static-libgcc
+            -static-libstdc++
+        )
+    endif()
+endif()
+
 include(GNUInstallDirs)
 install(TARGETS discord-video
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(WIN32)
+    install(TARGETS discord-video-launcher
+        RUNTIME DESTINATION .
+    )
+endif()

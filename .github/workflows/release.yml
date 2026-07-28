@@ -91,11 +91,30 @@ jobs:
             -BuildNumber $env:BUILD_NUMBER `
             -OutputDirectory '${{ runner.temp }}/release-assets'
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.7.1 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup installation failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          & .github/scripts/build-windows-installer.ps1 `
+            -Version $env:VERSION `
+            -BuildNumber $env:BUILD_NUMBER `
+            -PackageDirectory '${{ runner.temp }}/package/DiscordVideo' `
+            -OutputDirectory '${{ runner.temp }}/release-assets'
+
       - name: Upload Windows asset
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: ${{ runner.temp }}/release-assets/*.zip
+          path: |
+            ${{ runner.temp }}/release-assets/*.zip
+            ${{ runner.temp }}/release-assets/*.exe
           if-no-files-found: error
 
   macos:
@@ -172,6 +191,7 @@ jobs:
         shell: bash
         run: |
           test -f "release-assets/Windows-x64_v${VERSION}+${BUILD_NUMBER}.zip"
+          test -f "release-assets/Windows-x64-Setup_v${VERSION}+${BUILD_NUMBER}.exe"
           test -f "release-assets/macOS-arm64_v${VERSION}+${BUILD_NUMBER}.zip"
 
       - name: Create GitHub Release
@@ -182,14 +202,15 @@ jobs:
           {
             echo "DiscordVideo v${VERSION}+${BUILD_NUMBER}"
             echo
-            echo "- Windows x64 (Qt runtime and BtbN GPL FFmpeg included)"
+            echo "- Windows x64 portable ZIP (Qt runtime and BtbN GPL FFmpeg included)"
+            echo "- Windows x64 installer"
             echo "- macOS arm64 (Qt runtime and GPL FFmpeg included)"
             echo
             echo "BUILDNUM is the cumulative number of added lines in commits reachable from this tag."
           } > "${notes_file}"
 
           if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${tag}" release-assets/*.zip \
+            gh release upload "${tag}" release-assets/* \
               --repo "${GITHUB_REPOSITORY}" \
               --clobber
             gh release edit "${tag}" \
@@ -198,7 +219,7 @@ jobs:
               --notes-file "${notes_file}"
           else
             gh release create "${tag}" \
-              release-assets/*.zip \
+              release-assets/* \
               --repo "${GITHUB_REPOSITORY}" \
               --verify-tag \
               --title "${tag}" \

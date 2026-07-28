@@ -28,6 +28,11 @@ The Windows x64 archive uses the GPL static build published by BtbN/FFmpeg-Build
 - Build project and source recipes: https://github.com/BtbN/FFmpeg-Builds
 - Release assets: https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest
 
+The Windows installer is created with Inno Setup. Inno Setup is used only as a packaging tool and
+is not included as a runtime component.
+
+- Inno Setup project and license: https://jrsoftware.org/isinfo.php
+
 The macOS arm64 archive uses FFmpeg 8.1.2 and x264 commit
 `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`, compiled by the release workflow. Its FFmpeg and x264
 license texts are included beside the executables.
