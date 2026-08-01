@@ -58,6 +58,7 @@ qt_add_qml_module(discord-video
     QML_FILES
         qml/Main.qml
         qml/AboutWindow.qml
+        qml/AudioMixerWindow.qml
         qml/TrimWindow.qml
 )
 

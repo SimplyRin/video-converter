@@ -17,12 +17,15 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUuid>
 #include <QVersionNumber>
+#include <QVariantMap>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -32,6 +35,8 @@ namespace {
 constexpr int audioBitrateKbps = 96;
 constexpr int minimumVideoBitrateKbps = 50;
 constexpr double containerSafetyFactor = 0.97;
+constexpr double minimumAudioGainDb = -30.0;
+constexpr double maximumAudioGainDb = 30.0;
 
 QString readEmbeddedTextFile(const QString &path)
 {
@@ -47,6 +52,8 @@ AppController::AppController(QObject *parent)
     : QObject(parent)
 {
     m_probeProcess.setProcessChannelMode(QProcess::SeparateChannels);
+    m_trackProbeProcess.setProcessChannelMode(QProcess::SeparateChannels);
+    m_audioAnalysisProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_cacheProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_encodeProcess.setProcessChannelMode(QProcess::SeparateChannels);
 
@@ -127,6 +134,57 @@ AppController::AppController(QObject *parent)
                 emit encodingFinished(m_latestOutputPath);
             });
 
+    connect(&m_trackProbeProcess,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this,
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                m_tracksLoading = false;
+                if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+                    parseMediaTracks(m_trackProbeProcess.readAllStandardOutput());
+                } else {
+                    m_videoTracks.clear();
+                    m_audioTracks.clear();
+                    m_selectedVideoTrack = 0;
+                }
+                emit mediaTracksChanged();
+            });
+
+    connect(&m_audioAnalysisProcess, &QProcess::readyReadStandardError, this, [this] {
+        m_audioAnalysisOutput += m_audioAnalysisProcess.readAllStandardError();
+    });
+    connect(&m_audioAnalysisProcess,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this,
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                m_audioAnalysisOutput += m_audioAnalysisProcess.readAllStandardError();
+                const int trackIndex = m_audioAnalysisQueue.isEmpty()
+                    ? -1
+                    : m_audioAnalysisQueue.takeFirst();
+
+                static const QRegularExpression meanVolumePattern(
+                    QStringLiteral(R"(mean_volume:\s*([-+]?\d+(?:\.\d+)?)\s*dB)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                const QRegularExpressionMatch match = meanVolumePattern.match(
+                    QString::fromUtf8(m_audioAnalysisOutput));
+                if (exitStatus == QProcess::NormalExit
+                    && exitCode == 0
+                    && trackIndex >= 0
+                    && trackIndex < m_audioTracks.size()
+                    && match.hasMatch()) {
+                    bool ok = false;
+                    const double meanDb = match.captured(1).toDouble(&ok);
+                    if (ok) {
+                        AudioTrackInfo &track = m_audioTracks[trackIndex];
+                        track.measuredMeanDb = meanDb;
+                        track.hasMeasurement = true;
+                        ++m_audioAnalysisSuccessCount;
+                    }
+                }
+
+                emit mediaTracksChanged();
+                startNextAudioAnalysis();
+            });
+
     locateTools();
 }
 
@@ -173,6 +231,109 @@ QString AppController::toolStatus() const
         return QStringLiteral("FFmpeg を利用できます。");
     }
     return QStringLiteral("FFmpeg または FFprobe が見つかりません。app/tools/ffmpeg へ配置するか、PATH 設定してください。");
+}
+
+QVariantList AppController::videoTracks() const
+{
+    QVariantList result;
+    for (qsizetype index = 0; index < m_videoTracks.size(); ++index) {
+        const VideoTrackInfo &track = m_videoTracks.at(index);
+        QStringList details;
+        if (!track.codec.isEmpty()) {
+            details.append(track.codec.toUpper());
+        }
+        if (track.width > 0 && track.height > 0) {
+            details.append(QStringLiteral("%1×%2").arg(track.width).arg(track.height));
+        }
+        if (!track.language.isEmpty() && track.language != QStringLiteral("und")) {
+            details.append(track.language);
+        }
+        if (!track.title.isEmpty()) {
+            details.append(track.title);
+        }
+
+        QVariantMap item;
+        item.insert(QStringLiteral("index"), index);
+        item.insert(QStringLiteral("streamIndex"), track.streamIndex);
+        item.insert(QStringLiteral("label"),
+                    QStringLiteral("%1: %2")
+                        .arg(index)
+                        .arg(details.isEmpty() ? QStringLiteral("動画トラック")
+                                               : details.join(QStringLiteral(" · "))));
+        item.insert(QStringLiteral("selected"), index == m_selectedVideoTrack);
+        result.append(item);
+    }
+    return result;
+}
+
+QVariantList AppController::audioTracks() const
+{
+    QVariantList result;
+    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
+        const AudioTrackInfo &track = m_audioTracks.at(index);
+        QStringList details;
+        if (!track.codec.isEmpty()) {
+            details.append(track.codec.toUpper());
+        }
+        if (!track.channelLayout.isEmpty()) {
+            details.append(track.channelLayout);
+        } else if (track.channels > 0) {
+            details.append(QStringLiteral("%1 ch").arg(track.channels));
+        }
+        if (!track.language.isEmpty() && track.language != QStringLiteral("und")) {
+            details.append(track.language);
+        }
+        if (!track.title.isEmpty()) {
+            details.append(track.title);
+        }
+
+        QVariantMap item;
+        item.insert(QStringLiteral("index"), index);
+        item.insert(QStringLiteral("streamIndex"), track.streamIndex);
+        item.insert(QStringLiteral("label"),
+                    QStringLiteral("%1: %2")
+                        .arg(index)
+                        .arg(details.isEmpty() ? QStringLiteral("音声トラック")
+                                               : details.join(QStringLiteral(" · "))));
+        item.insert(QStringLiteral("selected"), track.selected);
+        item.insert(QStringLiteral("gainDb"), track.gainDb);
+        item.insert(QStringLiteral("hasMeasurement"), track.hasMeasurement);
+        item.insert(QStringLiteral("meanVolumeDb"), track.measuredMeanDb);
+        item.insert(QStringLiteral("hasRecommendation"), track.hasRecommendation);
+        item.insert(QStringLiteral("recommendedGainDb"), track.recommendedGainDb);
+        result.append(item);
+    }
+    return result;
+}
+
+int AppController::selectedVideoTrack() const
+{
+    return m_selectedVideoTrack;
+}
+
+int AppController::previewAudioTrack() const
+{
+    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
+        if (m_audioTracks.at(index).selected) {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+bool AppController::tracksLoading() const
+{
+    return m_tracksLoading;
+}
+
+bool AppController::analyzingAudio() const
+{
+    return m_analyzingAudio;
+}
+
+QString AppController::audioAnalysisStatus() const
+{
+    return m_audioAnalysisStatus;
 }
 
 QString AppController::licenseText() const
@@ -225,7 +386,24 @@ void AppController::selectFile(const QUrl &url)
     }
 
     m_selectedFilePath = info.absoluteFilePath();
+    if (m_trackProbeProcess.state() != QProcess::NotRunning) {
+        m_trackProbeProcess.kill();
+        m_trackProbeProcess.waitForFinished(1000);
+    }
+    m_analyzingAudio = false;
+    m_audioAnalysisQueue.clear();
+    if (m_audioAnalysisProcess.state() != QProcess::NotRunning) {
+        m_audioAnalysisProcess.kill();
+        m_audioAnalysisProcess.waitForFinished(1000);
+    }
+    m_videoTracks.clear();
+    m_audioTracks.clear();
+    m_selectedVideoTrack = 0;
+    m_audioAnalysisStatus.clear();
     emit selectedFileChanged();
+    emit mediaTracksChanged();
+    emit audioAnalysisChanged();
+    probeMediaTracks();
 }
 
 void AppController::chooseFile()
@@ -249,13 +427,104 @@ void AppController::clearSelectedFile()
     if (m_busy) {
         return;
     }
+    if (m_trackProbeProcess.state() != QProcess::NotRunning) {
+        m_trackProbeProcess.kill();
+        m_trackProbeProcess.waitForFinished(1000);
+    }
+    m_analyzingAudio = false;
+    m_audioAnalysisQueue.clear();
+    if (m_audioAnalysisProcess.state() != QProcess::NotRunning) {
+        m_audioAnalysisProcess.kill();
+        m_audioAnalysisProcess.waitForFinished(1000);
+    }
     m_selectedFilePath.clear();
+    m_videoTracks.clear();
+    m_audioTracks.clear();
+    m_selectedVideoTrack = 0;
+    m_tracksLoading = false;
+    m_audioAnalysisStatus.clear();
     emit selectedFileChanged();
+    emit mediaTracksChanged();
+    emit audioAnalysisChanged();
 }
 
 void AppController::refreshTools()
 {
     locateTools();
+    if (hasSelectedFile() && m_videoTracks.isEmpty() && m_audioTracks.isEmpty()) {
+        probeMediaTracks();
+    }
+}
+
+void AppController::setSelectedVideoTrack(int trackIndex)
+{
+    if (m_busy || trackIndex < 0 || trackIndex >= m_videoTracks.size()
+        || m_selectedVideoTrack == trackIndex) {
+        return;
+    }
+    m_selectedVideoTrack = trackIndex;
+    emit mediaTracksChanged();
+}
+
+void AppController::setAudioTrackSelected(int trackIndex, bool selected)
+{
+    if (m_busy || m_analyzingAudio || trackIndex < 0 || trackIndex >= m_audioTracks.size()
+        || m_audioTracks.at(trackIndex).selected == selected) {
+        return;
+    }
+    m_audioTracks[trackIndex].selected = selected;
+    for (AudioTrackInfo &track : m_audioTracks) {
+        track.hasRecommendation = false;
+    }
+    emit mediaTracksChanged();
+}
+
+void AppController::setAudioTrackGainDb(int trackIndex, double gainDb)
+{
+    if (m_busy || m_analyzingAudio || trackIndex < 0 || trackIndex >= m_audioTracks.size()
+        || !std::isfinite(gainDb)) {
+        return;
+    }
+    const double adjustedGain = std::clamp(gainDb, minimumAudioGainDb, maximumAudioGainDb);
+    if (qFuzzyCompare(m_audioTracks.at(trackIndex).gainDb, adjustedGain)) {
+        return;
+    }
+    m_audioTracks[trackIndex].gainDb = adjustedGain;
+    emit mediaTracksChanged();
+}
+
+void AppController::autoAdjustAudioTracks(double targetDb)
+{
+    if (m_busy || m_analyzingAudio || !toolsReady() || !hasSelectedFile()) {
+        return;
+    }
+    if (!std::isfinite(targetDb) || targetDb < -30.0 || targetDb > 0.0) {
+        fail(QStringLiteral("音量解析エラー"),
+             QStringLiteral("目標平均音量は -30～0 dBFS の範囲で指定してください。"));
+        return;
+    }
+
+    m_audioAnalysisQueue = selectedAudioTrackIndices();
+    if (m_audioAnalysisQueue.isEmpty()) {
+        fail(QStringLiteral("音量解析エラー"),
+             QStringLiteral("解析する音声トラックを1つ以上選択してください。"));
+        return;
+    }
+
+    m_audioAnalysisTargetDb = targetDb;
+    m_audioAnalysisTotal = m_audioAnalysisQueue.size();
+    m_audioAnalysisSuccessCount = 0;
+    for (AudioTrackInfo &track : m_audioTracks) {
+        if (track.selected) {
+            track.hasMeasurement = false;
+            track.hasRecommendation = false;
+        }
+    }
+    m_analyzingAudio = true;
+    m_audioAnalysisStatus = QStringLiteral("音量を解析しています…");
+    emit mediaTracksChanged();
+    emit audioAnalysisChanged();
+    startNextAudioAnalysis();
 }
 
 void AppController::encode(int targetSizeMiB,
@@ -269,6 +538,16 @@ void AppController::encode(int targetSizeMiB,
     }
     if (!hasSelectedFile()) {
         fail(QStringLiteral("エラー"), QStringLiteral("ファイルを選択してください。"));
+        return;
+    }
+    if (m_tracksLoading) {
+        fail(QStringLiteral("動画解析中"),
+             QStringLiteral("トラック情報の解析が完了してからもう一度実行してください。"));
+        return;
+    }
+    if (m_videoTracks.isEmpty()) {
+        fail(QStringLiteral("動画トラックがありません"),
+             QStringLiteral("出力できる動画トラックを取得できませんでした。"));
         return;
     }
     if (targetSizeMiB <= 0) {
@@ -498,6 +777,149 @@ QString AppController::locateTool(const QString &baseName) const
     return QStandardPaths::findExecutable(fileName);
 }
 
+void AppController::probeMediaTracks()
+{
+    if (!hasSelectedFile() || m_ffprobePath.isEmpty()
+        || m_trackProbeProcess.state() != QProcess::NotRunning) {
+        return;
+    }
+
+    m_tracksLoading = true;
+    emit mediaTracksChanged();
+    m_trackProbeProcess.start(
+        m_ffprobePath,
+        {QStringLiteral("-v"), QStringLiteral("error"),
+         QStringLiteral("-show_entries"),
+         QStringLiteral("stream=index,codec_type,codec_name,width,height,channels,channel_layout:stream_tags=title,language"),
+         QStringLiteral("-of"), QStringLiteral("json"),
+         m_selectedFilePath});
+
+    if (!m_trackProbeProcess.waitForStarted(5000)) {
+        m_tracksLoading = false;
+        emit mediaTracksChanged();
+    }
+}
+
+void AppController::parseMediaTracks(const QByteArray &json)
+{
+    m_videoTracks.clear();
+    m_audioTracks.clear();
+    m_selectedVideoTrack = 0;
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(json, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return;
+    }
+
+    const QJsonArray streams = document.object().value(QStringLiteral("streams")).toArray();
+    for (const QJsonValue &value : streams) {
+        const QJsonObject stream = value.toObject();
+        const QString type = stream.value(QStringLiteral("codec_type")).toString();
+        const QJsonObject tags = stream.value(QStringLiteral("tags")).toObject();
+        if (type == QStringLiteral("video")) {
+            VideoTrackInfo track;
+            track.streamIndex = stream.value(QStringLiteral("index")).toInt(-1);
+            track.codec = stream.value(QStringLiteral("codec_name")).toString();
+            track.width = stream.value(QStringLiteral("width")).toInt();
+            track.height = stream.value(QStringLiteral("height")).toInt();
+            track.title = tags.value(QStringLiteral("title")).toString();
+            track.language = tags.value(QStringLiteral("language")).toString();
+            m_videoTracks.append(track);
+        } else if (type == QStringLiteral("audio")) {
+            AudioTrackInfo track;
+            track.streamIndex = stream.value(QStringLiteral("index")).toInt(-1);
+            track.codec = stream.value(QStringLiteral("codec_name")).toString();
+            track.channels = stream.value(QStringLiteral("channels")).toInt();
+            track.channelLayout = stream.value(QStringLiteral("channel_layout")).toString();
+            track.title = tags.value(QStringLiteral("title")).toString();
+            track.language = tags.value(QStringLiteral("language")).toString();
+            track.selected = m_audioTracks.isEmpty();
+            m_audioTracks.append(track);
+        }
+    }
+}
+
+QList<int> AppController::selectedAudioTrackIndices() const
+{
+    QList<int> result;
+    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
+        if (m_audioTracks.at(index).selected) {
+            result.append(static_cast<int>(index));
+        }
+    }
+    return result;
+}
+
+void AppController::startNextAudioAnalysis()
+{
+    if (!m_analyzingAudio) {
+        return;
+    }
+    if (m_audioAnalysisQueue.isEmpty()) {
+        finishAudioAnalysis();
+        return;
+    }
+
+    const int trackIndex = m_audioAnalysisQueue.first();
+    const int completed = m_audioAnalysisTotal - m_audioAnalysisQueue.size();
+    m_audioAnalysisStatus = QStringLiteral("音声トラック %1 を解析中 (%2/%3)…")
+                                .arg(trackIndex)
+                                .arg(completed + 1)
+                                .arg(m_audioAnalysisTotal);
+    emit audioAnalysisChanged();
+
+    m_audioAnalysisOutput.clear();
+    m_audioAnalysisProcess.start(
+        m_ffmpegPath,
+        {QStringLiteral("-hide_banner"), QStringLiteral("-nostats"),
+         QStringLiteral("-i"), m_selectedFilePath,
+         QStringLiteral("-map"), QStringLiteral("0:a:%1").arg(trackIndex),
+         QStringLiteral("-af"), QStringLiteral("volumedetect"),
+         QStringLiteral("-f"), QStringLiteral("null"),
+         QStringLiteral("-")});
+
+    if (!m_audioAnalysisProcess.waitForStarted(5000)) {
+        m_audioAnalysisQueue.takeFirst();
+        startNextAudioAnalysis();
+    }
+}
+
+void AppController::finishAudioAnalysis()
+{
+    if (!m_analyzingAudio) {
+        return;
+    }
+
+    const double targetPerTrackDb = m_audioAnalysisTargetDb
+        - 10.0 * std::log10(static_cast<double>(std::max(1, m_audioAnalysisSuccessCount)));
+    if (m_audioAnalysisSuccessCount > 0) {
+        for (AudioTrackInfo &track : m_audioTracks) {
+            if (track.selected && track.hasMeasurement) {
+                track.recommendedGainDb = std::clamp(targetPerTrackDb - track.measuredMeanDb,
+                                                     minimumAudioGainDb,
+                                                     maximumAudioGainDb);
+                track.hasRecommendation = true;
+                track.gainDb = track.recommendedGainDb;
+            }
+        }
+    }
+
+    m_analyzingAudio = false;
+    if (m_audioAnalysisSuccessCount == m_audioAnalysisTotal) {
+        m_audioAnalysisStatus = QStringLiteral("自動調整が完了しました（ミックス目標: %1 dBFS）。")
+                                    .arg(m_audioAnalysisTargetDb, 0, 'f', 1);
+    } else if (m_audioAnalysisSuccessCount > 0) {
+        m_audioAnalysisStatus = QStringLiteral("%1/%2 トラックを自動調整しました。")
+                                    .arg(m_audioAnalysisSuccessCount)
+                                    .arg(m_audioAnalysisTotal);
+    } else {
+        m_audioAnalysisStatus = QStringLiteral("音量を解析できませんでした。");
+    }
+    emit mediaTracksChanged();
+    emit audioAnalysisChanged();
+}
+
 void AppController::probeDuration(int targetSizeMiB,
                                   qint64 startMs,
                                   qint64 endMs,
@@ -562,7 +984,10 @@ void AppController::startEncoding(int targetSizeMiB,
     const double targetBits = static_cast<double>(targetSizeMiB) * 1'000'000.0 * 8.0;
     const int totalBitrateKbps = static_cast<int>(std::floor(
         targetBits * containerSafetyFactor / durationSeconds / 1000.0));
-    const int videoBitrateKbps = totalBitrateKbps - audioBitrateKbps;
+    const int outputAudioBitrateKbps = selectedAudioTrackIndices().isEmpty()
+        ? 0
+        : audioBitrateKbps;
+    const int videoBitrateKbps = totalBitrateKbps - outputAudioBitrateKbps;
 
     if (videoBitrateKbps < minimumVideoBitrateKbps) {
         setBusy(false);
@@ -592,7 +1017,7 @@ void AppController::startEncoding(int targetSizeMiB,
             const QString cacheId = QUuid::createUuid()
                                         .toString(QUuid::WithoutBraces)
                                         .section(QLatin1Char('-'), 0, 0);
-            const QString cacheName = QStringLiteral("%1_%2M_%3.mp4")
+            const QString cacheName = QStringLiteral("%1_%2M_%3.mkv")
                                           .arg(input.completeBaseName())
                                           .arg(targetSizeMiB)
                                           .arg(cacheId);
@@ -614,16 +1039,22 @@ void AppController::startCacheCreation(qint64 startMs, qint64 endMs)
     m_cacheErrorBuffer.clear();
     setStatusText(QStringLiteral("無劣化の一時ファイルを作成中: 0.0%"));
 
-    const QStringList arguments {
+    QStringList arguments {
         QStringLiteral("-y"),
         QStringLiteral("-i"), m_selectedFilePath,
         QStringLiteral("-ss"), formatTime(startMs),
         QStringLiteral("-t"), formatTime(endMs - startMs),
-        QStringLiteral("-c"), QStringLiteral("copy"),
-        QStringLiteral("-progress"), QStringLiteral("pipe:1"),
-        QStringLiteral("-nostats"),
-        m_cacheFilePath
+        QStringLiteral("-map"), QStringLiteral("0:v:%1").arg(m_selectedVideoTrack)
     };
+    const QList<int> audioTracks = selectedAudioTrackIndices();
+    for (const int trackIndex : audioTracks) {
+        arguments << QStringLiteral("-map") << QStringLiteral("0:a:%1").arg(trackIndex);
+    }
+    arguments << QStringLiteral("-c") << QStringLiteral("copy")
+        << QStringLiteral("-avoid_negative_ts") << QStringLiteral("make_zero")
+        << QStringLiteral("-progress") << QStringLiteral("pipe:1")
+        << QStringLiteral("-nostats")
+        << m_cacheFilePath;
     m_cacheProcess.start(m_ffmpegPath, arguments);
 
     if (!m_cacheProcess.waitForStarted(5000)) {
@@ -638,6 +1069,25 @@ void AppController::prepareEncodingAttempts(int videoBitrateKbps)
     auto argumentsForEncoder = [this, videoBitrateKbps](const QString &encoder) {
         QStringList arguments {QStringLiteral("-y")};
         arguments << QStringLiteral("-i") << m_encodingInputPath;
+        const bool cacheInput = !m_cacheFilePath.isEmpty()
+            && m_encodingInputPath == m_cacheFilePath;
+        arguments << QStringLiteral("-map")
+                  << QStringLiteral("0:v:%1").arg(cacheInput ? 0 : m_selectedVideoTrack);
+
+        const QList<int> audioTracks = selectedAudioTrackIndices();
+        if (audioTracks.size() == 1) {
+            const int sourceAudioIndex = cacheInput ? 0 : audioTracks.first();
+            const double gainDb = m_audioTracks.at(audioTracks.first()).gainDb;
+            arguments << QStringLiteral("-map")
+                      << QStringLiteral("0:a:%1").arg(sourceAudioIndex)
+                      << QStringLiteral("-af:a:0")
+                      << QStringLiteral("volume=%1dB,alimiter=limit=0.95:level=false:latency=true")
+                             .arg(gainDb, 0, 'f', 2);
+        } else if (audioTracks.size() > 1) {
+            arguments << QStringLiteral("-filter_complex") << audioFilterGraph(cacheInput)
+                      << QStringLiteral("-map") << QStringLiteral("[audio_mix]");
+        }
+
         arguments << QStringLiteral("-c:v") << encoder;
         if (encoder == QStringLiteral("libx264")) {
             arguments << QStringLiteral("-preset") << QStringLiteral("medium");
@@ -645,10 +1095,14 @@ void AppController::prepareEncodingAttempts(int videoBitrateKbps)
         arguments << QStringLiteral("-b:v") << QStringLiteral("%1k").arg(videoBitrateKbps)
                   << QStringLiteral("-maxrate") << QStringLiteral("%1k").arg(videoBitrateKbps + 5)
                   << QStringLiteral("-bufsize") << QStringLiteral("%1k").arg(videoBitrateKbps * 2)
-                  << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p")
-                  << QStringLiteral("-c:a") << QStringLiteral("aac")
-                  << QStringLiteral("-b:a") << QStringLiteral("%1k").arg(audioBitrateKbps)
-                  << QStringLiteral("-movflags") << QStringLiteral("+faststart")
+                  << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+        if (!audioTracks.isEmpty()) {
+            arguments << QStringLiteral("-c:a") << QStringLiteral("aac")
+                      << QStringLiteral("-b:a") << QStringLiteral("%1k").arg(audioBitrateKbps);
+        } else {
+            arguments << QStringLiteral("-an");
+        }
+        arguments << QStringLiteral("-movflags") << QStringLiteral("+faststart")
                   << QStringLiteral("-progress") << QStringLiteral("pipe:1")
                   << QStringLiteral("-nostats")
                   << m_latestOutputPath;
@@ -678,6 +1132,28 @@ void AppController::prepareEncodingAttempts(int videoBitrateKbps)
     m_currentEncodingAttempt = 0;
     m_progressBuffer.clear();
     startCurrentEncodingAttempt();
+}
+
+QString AppController::audioFilterGraph(bool cacheInput) const
+{
+    const QList<int> audioTracks = selectedAudioTrackIndices();
+    QStringList filters;
+    QString mixInputs;
+    for (qsizetype position = 0; position < audioTracks.size(); ++position) {
+        const int selectedIndex = audioTracks.at(position);
+        const int sourceIndex = cacheInput ? static_cast<int>(position) : selectedIndex;
+        const double gainDb = m_audioTracks.at(selectedIndex).gainDb;
+        const QString label = QStringLiteral("audio_%1").arg(position);
+        filters.append(QStringLiteral("[0:a:%1]volume=%2dB[%3]")
+                           .arg(sourceIndex)
+                           .arg(gainDb, 0, 'f', 2)
+                           .arg(label));
+        mixInputs += QStringLiteral("[%1]").arg(label);
+    }
+    filters.append(QStringLiteral("%1amix=inputs=%2:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95:level=false:latency=true[audio_mix]")
+                       .arg(mixInputs)
+                       .arg(audioTracks.size()));
+    return filters.join(QLatin1Char(';'));
 }
 
 void AppController::startCurrentEncodingAttempt()

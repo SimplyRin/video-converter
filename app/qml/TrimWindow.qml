@@ -24,6 +24,23 @@ ApplicationWindow {
     property double startPosition: -1
     property double endPosition: -1
 
+    function selectedAudioCount() {
+        let count = 0
+        const tracks = backend.audioTracks
+        for (let index = 0; index < tracks.length; ++index) {
+            if (tracks[index].selected)
+                ++count
+        }
+        return count
+    }
+
+    function previewAudioGainDb() {
+        const tracks = backend.audioTracks
+        const previewIndex = backend.previewAudioTrack
+        return previewIndex >= 0 && previewIndex < tracks.length
+               ? Number(tracks[previewIndex].gainDb) : 0
+    }
+
     function openVideo(url, targetSize) {
         targetSizeMiB = targetSize
         startPosition = -1
@@ -37,19 +54,23 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
+        audioMixerWindow.close()
         player.stop()
         player.source = ""
     }
 
     AudioOutput {
         id: audioOutput
-        volume: 0.05
+        volume: Math.max(0, Math.min(1,
+                    0.05 * Math.pow(10, trimWindow.previewAudioGainDb() / 20)))
     }
 
     MediaPlayer {
         id: player
         audioOutput: audioOutput
         videoOutput: videoOutput
+        activeVideoTrack: backend.selectedVideoTrack
+        activeAudioTrack: backend.previewAudioTrack
 
         onErrorOccurred: function(error, errorString) {
             validationText.text = "動画を再生できません: " + errorString
@@ -69,6 +90,7 @@ ApplicationWindow {
 
         RowLayout {
             Layout.fillWidth: true
+            spacing: 6
 
             Button {
                 text: player.playbackState === MediaPlayer.PlayingState ? "一時停止" : "再生"
@@ -79,6 +101,91 @@ ApplicationWindow {
                         player.play()
                 }
             }
+
+            Button {
+                id: videoTrackButton
+                visible: backend.videoTracks.length > 1
+                enabled: !backend.busy && !backend.tracksLoading
+                text: "ビデオトラック ▾"
+                onClicked: videoTrackMenu.popup()
+
+                Menu {
+                    id: videoTrackMenu
+
+                    Instantiator {
+                        model: backend.videoTracks
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: modelData.label
+                            checkable: true
+                            checked: modelData.selected
+                            onTriggered: backend.setSelectedVideoTrack(modelData.index)
+                        }
+                        onObjectAdded: function(index, object) {
+                            videoTrackMenu.insertItem(index, object)
+                        }
+                        onObjectRemoved: function(index, object) {
+                            videoTrackMenu.removeItem(object)
+                        }
+                    }
+                }
+            }
+
+            Button {
+                id: audioTrackButton
+                visible: backend.audioTracks.length > 0
+                enabled: !backend.busy && !backend.tracksLoading && !backend.analyzingAudio
+                text: "音声トラック (" + trimWindow.selectedAudioCount()
+                      + "/" + backend.audioTracks.length + ") ▾"
+                onClicked: audioTrackMenu.popup()
+
+                ToolTip.visible: hovered
+                ToolTip.text: "選択した音声は出力時にすべて合成します。プレビューでは先頭の選択トラックを再生します。"
+
+                Menu {
+                    id: audioTrackMenu
+
+                    Instantiator {
+                        model: backend.audioTracks
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: modelData.label
+                            checkable: true
+                            checked: modelData.selected
+                            onTriggered: backend.setAudioTrackSelected(modelData.index, !modelData.selected)
+                        }
+                        onObjectAdded: function(index, object) {
+                            audioTrackMenu.insertItem(index, object)
+                        }
+                        onObjectRemoved: function(index, object) {
+                            audioTrackMenu.removeItem(object)
+                        }
+                    }
+
+                    MenuSeparator { }
+
+                    MenuItem {
+                        text: "音量ミキサーを開く…"
+                        onTriggered: audioMixerWindow.openMixer()
+                    }
+                }
+            }
+
+            Button {
+                visible: backend.audioTracks.length > 0
+                enabled: !backend.busy
+                text: "ミキサー"
+                onClicked: audioMixerWindow.openMixer()
+            }
+
+            Label {
+                visible: backend.tracksLoading
+                text: "トラック解析中…"
+                font.pixelSize: 11
+                opacity: 0.7
+            }
+
+            Item { Layout.fillWidth: true }
         }
 
         RowLayout {
@@ -180,12 +287,12 @@ ApplicationWindow {
             enabled: trimWindow.startPosition >= 0 && trimWindow.endPosition >= 0
 
             ToolTip.visible: hovered
-            ToolTip.text: "トリミング範囲を指定した場合に作成される一時 MP4 が対象です。"
+            ToolTip.text: "トリミング範囲を指定した場合に作成される一時 MKV が対象です。"
         }
 
         Label {
             Layout.fillWidth: true
-            text: "一時ファイルは、指定したトリミング範囲を再エンコードせずに保存した無劣化動画です。元動画と同じフォルダーに保存されます。"
+            text: "一時ファイルは、指定したトリミング範囲と選択トラックを再エンコードせずに保存した無劣化 MKV です。元動画と同じフォルダーに保存されます。"
             wrapMode: Text.WordWrap
             font.pixelSize: 11
             opacity: 0.75
@@ -204,6 +311,7 @@ ApplicationWindow {
             Button {
                 text: "エンコード"
                 highlighted: true
+                enabled: !backend.tracksLoading && !backend.analyzingAudio
                 onClicked: {
                     const hasStart = trimWindow.startPosition >= 0
                     const hasEnd = trimWindow.endPosition >= 0
@@ -226,6 +334,10 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    AudioMixerWindow {
+        id: audioMixerWindow
     }
 
     function formatTime(milliseconds) {
