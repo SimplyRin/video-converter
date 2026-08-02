@@ -104,19 +104,12 @@ ApplicationWindow {
                                                  === modelData.index)
             visible: false
 
-            function applyConfiguredTrack() {
+            function configuredTrackIsActive() {
                 const configuredTrack = Number(modelData.index)
-                if (!previewEnabled
-                    || configuredTrack < 0
-                    || trackPlayer.audioTracks.length <= configuredTrack) {
-                    return false
-                }
-                if (trackPlayer.activeAudioTrack !== configuredTrack) {
-                    trackPlayer.activeAudioTrack = configuredTrack
-                    levelMeter.reset()
-                    backend.setAudioTrackLevelDb(configuredTrack, -60)
-                }
-                return trackPlayer.activeAudioTrack === configuredTrack
+                return previewEnabled
+                       && configuredTrack >= 0
+                       && trackPlayer.audioTracks.length > configuredTrack
+                       && trackPlayer.activeAudioTrack === configuredTrack
             }
 
             function synchronize(forcePosition) {
@@ -137,7 +130,7 @@ ApplicationWindow {
                 // Some Qt multimedia backends restore audio track 0 while a
                 // new source is loading. Never start audio until our explicit
                 // track selection has been accepted by the backend.
-                if (!applyConfiguredTrack())
+                if (!configuredTrackIsActive())
                     return
 
                 if (forcePosition || Math.abs(trackPlayer.position - player.position) > 120)
@@ -184,20 +177,26 @@ ApplicationWindow {
                 audioOutput: trackAudioOutput
                 audioBufferOutput: levelMeter
                 activeVideoTrack: -1
-                activeAudioTrack: -1
+                // Bind the requested track from player initialization. On
+                // some backends, switching from -1 after loading leaves the
+                // audio decoder disabled and produces no monitor output.
+                activeAudioTrack: Number(audioPreview.modelData.index)
 
                 onAudioTracksChanged: Qt.callLater(function() {
-                    audioPreview.applyConfiguredTrack()
                     audioPreview.synchronize(true)
                 })
 
                 onActiveAudioTrackChanged: {
-                    if (activeAudioTrack !== Number(audioPreview.modelData.index))
+                    if (activeAudioTrack !== Number(audioPreview.modelData.index)) {
                         levelMeter.reset()
+                    } else {
+                        Qt.callLater(function() {
+                            audioPreview.synchronize(true)
+                        })
+                    }
                 }
 
                 onMediaStatusChanged: Qt.callLater(function() {
-                    audioPreview.applyConfiguredTrack()
                     audioPreview.synchronize(true)
                 })
             }
