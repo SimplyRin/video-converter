@@ -100,6 +100,13 @@ ApplicationWindow {
                                           && (backend.monitoredAudioTrack < 0
                                               || backend.monitoredAudioTrack
                                                  === trackIndex)
+            // MediaPlayer.activeAudioTrack does not always emit a change
+            // notification when the backend switches tracks on its own, so a
+            // binding that reads it can hold a stale value forever and leave
+            // the output muted while audio is decoding. Record the accepted
+            // state in a plain property instead; applyConfiguredTrack() is
+            // already driven by every event that can change it.
+            property bool trackReady: false
             visible: false
 
             function applyConfiguredTrack() {
@@ -107,6 +114,7 @@ ApplicationWindow {
                 if (!previewEnabled
                     || configuredTrack < 0
                     || trackPlayer.audioTracks.length <= configuredTrack) {
+                    audioPreview.trackReady = false
                     return false
                 }
                 if (trackPlayer.activeAudioTrack !== configuredTrack) {
@@ -114,11 +122,14 @@ ApplicationWindow {
                     levelMeter.reset()
                     backend.setAudioTrackLevelDb(configuredTrack, -60)
                 }
-                return trackPlayer.activeAudioTrack === configuredTrack
+                audioPreview.trackReady =
+                    trackPlayer.activeAudioTrack === configuredTrack
+                return audioPreview.trackReady
             }
 
             function synchronize(forcePosition) {
                 if (!previewEnabled || trimWindow.previewSource.toString().length === 0) {
+                    audioPreview.trackReady = false
                     trackPlayer.stop()
                     levelMeter.reset()
                     backend.setAudioTrackLevelDb(audioPreview.trackIndex, -60)
@@ -163,11 +174,14 @@ ApplicationWindow {
             AudioOutput {
                 id: trackAudioOutput
                 device: mediaDevices.defaultAudioOutput
-                muted: !audioPreview.previewEnabled
-                       || trackPlayer.activeAudioTrack
-                          !== audioPreview.trackIndex
+                muted: !audioPreview.previewEnabled || !audioPreview.trackReady
+                // AudioOutput.volume is a linear amplitude, so the mixer gain
+                // converts straight from dB. 0 dB must stay unity: an extra
+                // attenuation factor here would silently offset the preview
+                // from the gain the encoder actually applies. Boosts above
+                // 0 dB cannot be previewed because the scale stops at 1.0.
                 volume: Math.max(0, Math.min(1,
-                            0.05 * Math.pow(10, audioPreview.gainDb / 20)))
+                            Math.pow(10, audioPreview.gainDb / 20)))
             }
 
             AudioLevelMeter {
