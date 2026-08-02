@@ -170,6 +170,7 @@ jobs:
             ${{ runner.temp }}/release-assets/*.zip
             ${{ runner.temp }}/release-assets/*.exe
           if-no-files-found: error
+          retention-days: 1
 
   macos:
     name: macOS arm64
@@ -263,6 +264,7 @@ jobs:
           name: macos-release
           path: ${{ runner.temp }}/release-assets/*.zip
           if-no-files-found: error
+          retention-days: 1
 
   release:
     name: Publish GitHub Release
@@ -275,6 +277,7 @@ jobs:
       (needs.windows.result == 'success' || needs.macos.result == 'success')
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -349,3 +352,24 @@ jobs:
                 --notes-file "${notes_file}"
             fi
           fi
+
+      - name: Delete temporary workflow artifacts
+        shell: bash
+        run: |
+          artifact_ids="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.name == "windows-release" or .name == "macos-release") | .id'
+          )"
+
+          if [[ -z "${artifact_ids}" ]]; then
+            echo "No temporary release artifacts were found for this workflow run."
+            exit 0
+          fi
+
+          while IFS= read -r artifact_id; do
+            [[ -n "${artifact_id}" ]] || continue
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+            echo "Deleted temporary artifact ${artifact_id}."
+          done <<< "${artifact_ids}"
