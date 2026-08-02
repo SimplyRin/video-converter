@@ -23,11 +23,13 @@ class AppController final : public QObject
     Q_PROPERTY(QString toolStatus READ toolStatus NOTIFY toolsChanged)
     Q_PROPERTY(QVariantList videoTracks READ videoTracks NOTIFY mediaTracksChanged)
     Q_PROPERTY(QVariantList audioTracks READ audioTracks NOTIFY mediaTracksChanged)
+    Q_PROPERTY(QVariantList audioTrackLevels READ audioTrackLevels NOTIFY audioTrackLevelsChanged)
     Q_PROPERTY(int selectedVideoTrack READ selectedVideoTrack WRITE setSelectedVideoTrack NOTIFY mediaTracksChanged)
-    Q_PROPERTY(int previewAudioTrack READ previewAudioTrack NOTIFY mediaTracksChanged)
+    Q_PROPERTY(int monitoredAudioTrack READ monitoredAudioTrack WRITE setMonitoredAudioTrack NOTIFY audioMonitorChanged)
     Q_PROPERTY(bool tracksLoading READ tracksLoading NOTIFY mediaTracksChanged)
     Q_PROPERTY(bool analyzingAudio READ analyzingAudio NOTIFY audioAnalysisChanged)
     Q_PROPERTY(QString audioAnalysisStatus READ audioAnalysisStatus NOTIFY audioAnalysisChanged)
+    Q_PROPERTY(double audioAnalysisTrackProgress READ audioAnalysisTrackProgress NOTIFY audioAnalysisChanged)
     Q_PROPERTY(bool checkingForUpdates READ checkingForUpdates NOTIFY updateStateChanged)
     Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY updateStateChanged)
     Q_PROPERTY(bool includePrereleaseUpdates READ includePrereleaseUpdates WRITE setIncludePrereleaseUpdates NOTIFY updateStateChanged)
@@ -52,11 +54,13 @@ public:
     [[nodiscard]] QString toolStatus() const;
     [[nodiscard]] QVariantList videoTracks() const;
     [[nodiscard]] QVariantList audioTracks() const;
+    [[nodiscard]] QVariantList audioTrackLevels() const;
     [[nodiscard]] int selectedVideoTrack() const;
-    [[nodiscard]] int previewAudioTrack() const;
+    [[nodiscard]] int monitoredAudioTrack() const;
     [[nodiscard]] bool tracksLoading() const;
     [[nodiscard]] bool analyzingAudio() const;
     [[nodiscard]] QString audioAnalysisStatus() const;
+    [[nodiscard]] double audioAnalysisTrackProgress() const;
     [[nodiscard]] bool checkingForUpdates() const;
     [[nodiscard]] bool updateAvailable() const;
     [[nodiscard]] bool includePrereleaseUpdates() const;
@@ -74,8 +78,13 @@ public:
     Q_INVOKABLE void refreshTools();
     Q_INVOKABLE void setSelectedVideoTrack(int trackIndex);
     Q_INVOKABLE void setAudioTrackSelected(int trackIndex, bool selected);
+    Q_INVOKABLE void setAllAudioTracksSelected(bool selected);
     Q_INVOKABLE void setAudioTrackGainDb(int trackIndex, double gainDb);
-    Q_INVOKABLE void autoAdjustAudioTracks(double targetDb = -8.0);
+    Q_INVOKABLE void setAudioTrackLevelDb(int trackIndex, double levelDb);
+    Q_INVOKABLE void resetAudioTrackLevels();
+    Q_INVOKABLE void setMonitoredAudioTrack(int trackIndex);
+    Q_INVOKABLE void autoAdjustAudioTracks(double targetDb = -8.0,
+                                           bool analyzeAllTracks = false);
     Q_INVOKABLE void encode(int targetSizeMiB,
                             qint64 startMs = -1,
                             qint64 endMs = -1,
@@ -95,6 +104,8 @@ signals:
     void statusTextChanged();
     void toolsChanged();
     void mediaTracksChanged();
+    void audioTrackLevelsChanged();
+    void audioMonitorChanged();
     void audioAnalysisChanged();
     void updateStateChanged();
     void errorOccurred(const QString &title, const QString &message);
@@ -131,6 +142,8 @@ private:
     void parseMediaTracks(const QByteArray &json);
     void startNextAudioAnalysis();
     void finishAudioAnalysis();
+    void consumeAudioAnalysisProgressOutput();
+    void updateAudioAnalysisProgress(double trackProgress);
     [[nodiscard]] QList<int> selectedAudioTrackIndices() const;
     [[nodiscard]] QString audioFilterGraph(bool cacheInput) const;
     void probeDuration(int targetSizeMiB,
@@ -192,13 +205,20 @@ private:
     QString m_updateStatus = QStringLiteral("アップデートはまだ確認されていません。");
     QList<VideoTrackInfo> m_videoTracks;
     QList<AudioTrackInfo> m_audioTracks;
+    QList<double> m_audioTrackLevels;
     int m_selectedVideoTrack = 0;
+    int m_monitoredAudioTrack = -1;
+    qint64 m_mediaDurationMs = 0;
     bool m_tracksLoading = false;
     bool m_analyzingAudio = false;
     QString m_audioAnalysisStatus;
     QList<int> m_audioAnalysisQueue;
     int m_audioAnalysisTotal = 0;
     int m_audioAnalysisSuccessCount = 0;
+    int m_audioAnalysisCurrentTrack = -1;
+    int m_audioAnalysisCurrentOrdinal = 0;
+    double m_audioAnalysisTrackProgress = 0.0;
     double m_audioAnalysisTargetDb = -8.0;
     QByteArray m_audioAnalysisOutput;
+    QByteArray m_audioAnalysisProgressBuffer;
 };

@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS
+find_package(Qt6 6.8 REQUIRED COMPONENTS
     Core
     Gui
     Multimedia
@@ -24,7 +24,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Widgets
 )
 
-qt_standard_project_setup(REQUIRES 6.5)
+qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(discord-video
     src/main.cpp
@@ -64,6 +64,13 @@ qt_add_qml_module(discord-video
         qml/AboutWindow.qml
         qml/AudioMixerWindow.qml
         qml/TrimWindow.qml
+    SOURCES
+        src/AudioLevelMeter.cpp
+        src/AudioLevelMeter.h
+)
+
+target_include_directories(discord-video PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
 target_link_libraries(discord-video PRIVATE

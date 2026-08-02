@@ -38,6 +38,7 @@ constexpr int minimumVideoBitrateKbps = 50;
 constexpr double containerSafetyFactor = 0.97;
 constexpr double minimumAudioGainDb = -30.0;
 constexpr double maximumAudioGainDb = 30.0;
+constexpr double minimumAudioLevelDb = -60.0;
 
 struct ReleaseVersion {
     QVersionNumber baseVersion;
@@ -221,7 +222,12 @@ AppController::AppController(QObject *parent)
                 } else {
                     m_videoTracks.clear();
                     m_audioTracks.clear();
+                    m_audioTrackLevels.clear();
                     m_selectedVideoTrack = 0;
+                    m_monitoredAudioTrack = -1;
+                    m_mediaDurationMs = 0;
+                    emit audioTrackLevelsChanged();
+                    emit audioMonitorChanged();
                 }
                 emit mediaTracksChanged();
             });
@@ -229,10 +235,13 @@ AppController::AppController(QObject *parent)
     connect(&m_audioAnalysisProcess, &QProcess::readyReadStandardError, this, [this] {
         m_audioAnalysisOutput += m_audioAnalysisProcess.readAllStandardError();
     });
+    connect(&m_audioAnalysisProcess, &QProcess::readyReadStandardOutput,
+            this, &AppController::consumeAudioAnalysisProgressOutput);
     connect(&m_audioAnalysisProcess,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
             this,
             [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                consumeAudioAnalysisProgressOutput();
                 m_audioAnalysisOutput += m_audioAnalysisProcess.readAllStandardError();
                 const int trackIndex = m_audioAnalysisQueue.isEmpty()
                     ? -1
@@ -258,6 +267,7 @@ AppController::AppController(QObject *parent)
                     }
                 }
 
+                m_audioAnalysisCurrentTrack = -1;
                 emit mediaTracksChanged();
                 startNextAudioAnalysis();
             });
@@ -383,19 +393,24 @@ QVariantList AppController::audioTracks() const
     return result;
 }
 
+QVariantList AppController::audioTrackLevels() const
+{
+    QVariantList result;
+    result.reserve(m_audioTrackLevels.size());
+    for (const double levelDb : m_audioTrackLevels) {
+        result.append(levelDb);
+    }
+    return result;
+}
+
 int AppController::selectedVideoTrack() const
 {
     return m_selectedVideoTrack;
 }
 
-int AppController::previewAudioTrack() const
+int AppController::monitoredAudioTrack() const
 {
-    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
-        if (m_audioTracks.at(index).selected) {
-            return static_cast<int>(index);
-        }
-    }
-    return -1;
+    return m_monitoredAudioTrack;
 }
 
 bool AppController::tracksLoading() const
@@ -411,6 +426,11 @@ bool AppController::analyzingAudio() const
 QString AppController::audioAnalysisStatus() const
 {
     return m_audioAnalysisStatus;
+}
+
+double AppController::audioAnalysisTrackProgress() const
+{
+    return m_audioAnalysisTrackProgress;
 }
 
 QString AppController::licenseText() const
@@ -485,10 +505,16 @@ void AppController::selectFile(const QUrl &url)
     }
     m_videoTracks.clear();
     m_audioTracks.clear();
+    m_audioTrackLevels.clear();
     m_selectedVideoTrack = 0;
+    m_monitoredAudioTrack = -1;
+    m_mediaDurationMs = 0;
+    m_audioAnalysisTrackProgress = 0.0;
     m_audioAnalysisStatus.clear();
     emit selectedFileChanged();
     emit mediaTracksChanged();
+    emit audioTrackLevelsChanged();
+    emit audioMonitorChanged();
     emit audioAnalysisChanged();
     probeMediaTracks();
 }
@@ -527,11 +553,17 @@ void AppController::clearSelectedFile()
     m_selectedFilePath.clear();
     m_videoTracks.clear();
     m_audioTracks.clear();
+    m_audioTrackLevels.clear();
     m_selectedVideoTrack = 0;
+    m_monitoredAudioTrack = -1;
+    m_mediaDurationMs = 0;
+    m_audioAnalysisTrackProgress = 0.0;
     m_tracksLoading = false;
     m_audioAnalysisStatus.clear();
     emit selectedFileChanged();
     emit mediaTracksChanged();
+    emit audioTrackLevelsChanged();
+    emit audioMonitorChanged();
     emit audioAnalysisChanged();
 }
 
@@ -566,6 +598,27 @@ void AppController::setAudioTrackSelected(int trackIndex, bool selected)
     emit mediaTracksChanged();
 }
 
+void AppController::setAllAudioTracksSelected(bool selected)
+{
+    if (m_busy || m_analyzingAudio) {
+        return;
+    }
+    bool changed = false;
+    for (AudioTrackInfo &track : m_audioTracks) {
+        if (track.selected != selected) {
+            track.selected = selected;
+            changed = true;
+        }
+        if (track.hasRecommendation) {
+            track.hasRecommendation = false;
+            changed = true;
+        }
+    }
+    if (changed) {
+        emit mediaTracksChanged();
+    }
+}
+
 void AppController::setAudioTrackGainDb(int trackIndex, double gainDb)
 {
     if (m_busy || m_analyzingAudio || trackIndex < 0 || trackIndex >= m_audioTracks.size()
@@ -580,7 +633,45 @@ void AppController::setAudioTrackGainDb(int trackIndex, double gainDb)
     emit mediaTracksChanged();
 }
 
-void AppController::autoAdjustAudioTracks(double targetDb)
+void AppController::setAudioTrackLevelDb(int trackIndex, double levelDb)
+{
+    if (trackIndex < 0 || trackIndex >= m_audioTrackLevels.size() || !std::isfinite(levelDb)) {
+        return;
+    }
+    const double adjustedLevel = std::clamp(levelDb, minimumAudioLevelDb, 0.0);
+    if (std::abs(m_audioTrackLevels.at(trackIndex) - adjustedLevel) < 0.1) {
+        return;
+    }
+    m_audioTrackLevels[trackIndex] = adjustedLevel;
+    emit audioTrackLevelsChanged();
+}
+
+void AppController::resetAudioTrackLevels()
+{
+    bool changed = false;
+    for (double &levelDb : m_audioTrackLevels) {
+        if (!qFuzzyCompare(levelDb, minimumAudioLevelDb)) {
+            levelDb = minimumAudioLevelDb;
+            changed = true;
+        }
+    }
+    if (changed) {
+        emit audioTrackLevelsChanged();
+    }
+}
+
+void AppController::setMonitoredAudioTrack(int trackIndex)
+{
+    if (trackIndex < -1 || trackIndex >= m_audioTracks.size()
+        || m_monitoredAudioTrack == trackIndex) {
+        return;
+    }
+    m_monitoredAudioTrack = trackIndex;
+    resetAudioTrackLevels();
+    emit audioMonitorChanged();
+}
+
+void AppController::autoAdjustAudioTracks(double targetDb, bool analyzeAllTracks)
 {
     if (m_busy || m_analyzingAudio || !toolsReady() || !hasSelectedFile()) {
         return;
@@ -589,6 +680,13 @@ void AppController::autoAdjustAudioTracks(double targetDb)
         fail(QStringLiteral("音量解析エラー"),
              QStringLiteral("目標平均音量は -30～0 dBFS の範囲で指定してください。"));
         return;
+    }
+
+    if (analyzeAllTracks) {
+        for (AudioTrackInfo &track : m_audioTracks) {
+            track.selected = true;
+        }
+        emit mediaTracksChanged();
     }
 
     m_audioAnalysisQueue = selectedAudioTrackIndices();
@@ -601,6 +699,10 @@ void AppController::autoAdjustAudioTracks(double targetDb)
     m_audioAnalysisTargetDb = targetDb;
     m_audioAnalysisTotal = m_audioAnalysisQueue.size();
     m_audioAnalysisSuccessCount = 0;
+    m_audioAnalysisCurrentTrack = -1;
+    m_audioAnalysisCurrentOrdinal = 0;
+    m_audioAnalysisTrackProgress = 0.0;
+    m_audioAnalysisProgressBuffer.clear();
     for (AudioTrackInfo &track : m_audioTracks) {
         if (track.selected) {
             track.hasMeasurement = false;
@@ -929,7 +1031,7 @@ void AppController::probeMediaTracks()
         m_ffprobePath,
         {QStringLiteral("-v"), QStringLiteral("error"),
          QStringLiteral("-show_entries"),
-         QStringLiteral("stream=index,codec_type,codec_name,width,height,channels,channel_layout:stream_tags=title,language"),
+         QStringLiteral("stream=index,codec_type,codec_name,width,height,channels,channel_layout,duration:stream_tags=title,language:format=duration"),
          QStringLiteral("-of"), QStringLiteral("json"),
          m_selectedFilePath});
 
@@ -943,7 +1045,12 @@ void AppController::parseMediaTracks(const QByteArray &json)
 {
     m_videoTracks.clear();
     m_audioTracks.clear();
+    m_audioTrackLevels.clear();
     m_selectedVideoTrack = 0;
+    m_monitoredAudioTrack = -1;
+    m_mediaDurationMs = 0;
+    emit audioTrackLevelsChanged();
+    emit audioMonitorChanged();
 
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(json, &parseError);
@@ -951,9 +1058,30 @@ void AppController::parseMediaTracks(const QByteArray &json)
         return;
     }
 
-    const QJsonArray streams = document.object().value(QStringLiteral("streams")).toArray();
+    const QJsonObject root = document.object();
+    bool durationOk = false;
+    const double durationSeconds = root.value(QStringLiteral("format"))
+                                       .toObject()
+                                       .value(QStringLiteral("duration"))
+                                       .toVariant()
+                                       .toDouble(&durationOk);
+    if (durationOk && std::isfinite(durationSeconds) && durationSeconds > 0.0) {
+        m_mediaDurationMs = qRound64(durationSeconds * 1000.0);
+    }
+
+    const QJsonArray streams = root.value(QStringLiteral("streams")).toArray();
     for (const QJsonValue &value : streams) {
         const QJsonObject stream = value.toObject();
+        if (m_mediaDurationMs <= 0) {
+            bool streamDurationOk = false;
+            const double streamDurationSeconds = stream.value(QStringLiteral("duration"))
+                                                     .toVariant()
+                                                     .toDouble(&streamDurationOk);
+            if (streamDurationOk && std::isfinite(streamDurationSeconds)
+                && streamDurationSeconds > 0.0) {
+                m_mediaDurationMs = qRound64(streamDurationSeconds * 1000.0);
+            }
+        }
         const QString type = stream.value(QStringLiteral("codec_type")).toString();
         const QJsonObject tags = stream.value(QStringLiteral("tags")).toObject();
         if (type == QStringLiteral("video")) {
@@ -977,6 +1105,8 @@ void AppController::parseMediaTracks(const QByteArray &json)
             m_audioTracks.append(track);
         }
     }
+    m_audioTrackLevels.fill(minimumAudioLevelDb, m_audioTracks.size());
+    emit audioTrackLevelsChanged();
 }
 
 QList<int> AppController::selectedAudioTrackIndices() const
@@ -1002,16 +1132,16 @@ void AppController::startNextAudioAnalysis()
 
     const int trackIndex = m_audioAnalysisQueue.first();
     const int completed = m_audioAnalysisTotal - m_audioAnalysisQueue.size();
-    m_audioAnalysisStatus = QStringLiteral("音声トラック %1 を解析中 (%2/%3)…")
-                                .arg(trackIndex)
-                                .arg(completed + 1)
-                                .arg(m_audioAnalysisTotal);
-    emit audioAnalysisChanged();
+    m_audioAnalysisCurrentTrack = trackIndex;
+    m_audioAnalysisCurrentOrdinal = completed + 1;
+    updateAudioAnalysisProgress(0.0);
 
     m_audioAnalysisOutput.clear();
+    m_audioAnalysisProgressBuffer.clear();
     m_audioAnalysisProcess.start(
         m_ffmpegPath,
         {QStringLiteral("-hide_banner"), QStringLiteral("-nostats"),
+         QStringLiteral("-progress"), QStringLiteral("pipe:1"),
          QStringLiteral("-i"), m_selectedFilePath,
          QStringLiteral("-map"), QStringLiteral("0:a:%1").arg(trackIndex),
          QStringLiteral("-af"), QStringLiteral("volumedetect"),
@@ -1020,8 +1150,50 @@ void AppController::startNextAudioAnalysis()
 
     if (!m_audioAnalysisProcess.waitForStarted(5000)) {
         m_audioAnalysisQueue.takeFirst();
+        m_audioAnalysisCurrentTrack = -1;
         startNextAudioAnalysis();
     }
+}
+
+void AppController::consumeAudioAnalysisProgressOutput()
+{
+    m_audioAnalysisProgressBuffer += m_audioAnalysisProcess.readAllStandardOutput();
+    qsizetype newlineIndex = -1;
+    while ((newlineIndex = m_audioAnalysisProgressBuffer.indexOf('\n')) >= 0) {
+        const QByteArray line = m_audioAnalysisProgressBuffer.left(newlineIndex).trimmed();
+        m_audioAnalysisProgressBuffer.remove(0, newlineIndex + 1);
+        if (!line.startsWith("out_time_us=")) {
+            continue;
+        }
+        bool ok = false;
+        const qint64 outputTimeUs = line.mid(sizeof("out_time_us=") - 1).toLongLong(&ok);
+        if (ok && m_mediaDurationMs > 0) {
+            const double progress = static_cast<double>(outputTimeUs)
+                / (static_cast<double>(m_mediaDurationMs) * 1000.0);
+            updateAudioAnalysisProgress(std::clamp(progress, 0.0, 1.0));
+        }
+    }
+}
+
+void AppController::updateAudioAnalysisProgress(double trackProgress)
+{
+    if (m_audioAnalysisCurrentTrack < 0) {
+        return;
+    }
+    m_audioAnalysisTrackProgress = std::clamp(trackProgress, 0.0, 1.0);
+    if (m_mediaDurationMs > 0) {
+        m_audioAnalysisStatus = QStringLiteral("音声トラック %1 を解析中 (%2/%3): %4%")
+                                    .arg(m_audioAnalysisCurrentTrack)
+                                    .arg(m_audioAnalysisCurrentOrdinal)
+                                    .arg(m_audioAnalysisTotal)
+                                    .arg(m_audioAnalysisTrackProgress * 100.0, 0, 'f', 1);
+    } else {
+        m_audioAnalysisStatus = QStringLiteral("音声トラック %1 を解析中 (%2/%3)…")
+                                    .arg(m_audioAnalysisCurrentTrack)
+                                    .arg(m_audioAnalysisCurrentOrdinal)
+                                    .arg(m_audioAnalysisTotal);
+    }
+    emit audioAnalysisChanged();
 }
 
 void AppController::finishAudioAnalysis()
@@ -1045,6 +1217,8 @@ void AppController::finishAudioAnalysis()
     }
 
     m_analyzingAudio = false;
+    m_audioAnalysisCurrentTrack = -1;
+    m_audioAnalysisTrackProgress = 0.0;
     if (m_audioAnalysisSuccessCount == m_audioAnalysisTotal) {
         m_audioAnalysisStatus = QStringLiteral("自動調整が完了しました（ミックス目標: %1 dBFS）。")
                                     .arg(m_audioAnalysisTargetDb, 0, 'f', 1);

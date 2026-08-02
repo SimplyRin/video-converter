@@ -23,6 +23,7 @@ ApplicationWindow {
     property int targetSizeMiB: 8
     property double startPosition: -1
     property double endPosition: -1
+    property url previewSource: ""
 
     function selectedAudioCount() {
         let count = 0
@@ -34,11 +35,12 @@ ApplicationWindow {
         return count
     }
 
-    function previewAudioGainDb() {
-        const tracks = backend.audioTracks
-        const previewIndex = backend.previewAudioTrack
-        return previewIndex >= 0 && previewIndex < tracks.length
-               ? Number(tracks[previewIndex].gainDb) : 0
+    function synchronizeAudioPreviews(forcePosition) {
+        for (let index = 0; index < audioPreviewPlayers.count; ++index) {
+            const preview = audioPreviewPlayers.objectAt(index)
+            if (preview)
+                preview.synchronize(forcePosition)
+        }
     }
 
     function openVideo(url, targetSize) {
@@ -46,7 +48,8 @@ ApplicationWindow {
         startPosition = -1
         endPosition = -1
         validationText.text = ""
-        player.source = url
+        backend.resetAudioTrackLevels()
+        previewSource = url
         show()
         raise()
         requestActivate()
@@ -56,25 +59,119 @@ ApplicationWindow {
     onClosing: function(close) {
         audioMixerWindow.close()
         player.stop()
-        player.source = ""
-    }
-
-    AudioOutput {
-        id: audioOutput
-        volume: Math.max(0, Math.min(1,
-                    0.05 * Math.pow(10, trimWindow.previewAudioGainDb() / 20)))
+        synchronizeAudioPreviews(true)
+        previewSource = ""
+        backend.resetAudioTrackLevels()
     }
 
     MediaPlayer {
         id: player
-        audioOutput: audioOutput
+        source: trimWindow.previewSource
         videoOutput: videoOutput
         activeVideoTrack: backend.selectedVideoTrack
-        activeAudioTrack: backend.previewAudioTrack
+        activeAudioTrack: -1
+
+        onPlaybackStateChanged: Qt.callLater(function() {
+            trimWindow.synchronizeAudioPreviews(true)
+            if (playbackState !== MediaPlayer.PlayingState)
+                backend.resetAudioTrackLevels()
+        })
 
         onErrorOccurred: function(error, errorString) {
             validationText.text = "動画を再生できません: " + errorString
         }
+    }
+
+    Instantiator {
+        id: audioPreviewPlayers
+        model: backend.audioTracks
+
+        delegate: Item {
+            id: audioPreview
+
+            required property var modelData
+            property bool trackSelected: Boolean(modelData.selected)
+            property bool previewEnabled: backend.monitoredAudioTrack >= 0
+                                          ? backend.monitoredAudioTrack === modelData.index
+                                          : trackSelected
+            visible: false
+
+            function synchronize(forcePosition) {
+                if (!previewEnabled || trimWindow.previewSource.toString().length === 0) {
+                    trackPlayer.stop()
+                    levelMeter.reset()
+                    backend.setAudioTrackLevelDb(modelData.index, -60)
+                    return
+                }
+
+                const ready = trackPlayer.mediaStatus === MediaPlayer.LoadedMedia
+                           || trackPlayer.mediaStatus === MediaPlayer.BufferingMedia
+                           || trackPlayer.mediaStatus === MediaPlayer.BufferedMedia
+                           || trackPlayer.mediaStatus === MediaPlayer.StalledMedia
+                if (!ready)
+                    return
+
+                if (forcePosition || Math.abs(trackPlayer.position - player.position) > 120)
+                    trackPlayer.position = player.position
+
+                if (player.playbackState === MediaPlayer.PlayingState) {
+                    if (trackPlayer.playbackState !== MediaPlayer.PlayingState)
+                        trackPlayer.play()
+                } else if (player.playbackState === MediaPlayer.PausedState) {
+                    if (trackPlayer.playbackState !== MediaPlayer.PausedState)
+                        trackPlayer.pause()
+                } else {
+                    trackPlayer.stop()
+                    levelMeter.reset()
+                }
+            }
+
+            onTrackSelectedChanged: Qt.callLater(function() {
+                audioPreview.synchronize(true)
+            })
+            onPreviewEnabledChanged: Qt.callLater(function() {
+                audioPreview.synchronize(true)
+            })
+
+            AudioOutput {
+                id: trackAudioOutput
+                volume: Math.max(0, Math.min(1,
+                            0.05 * Math.pow(10, Number(audioPreview.modelData.gainDb) / 20)))
+            }
+
+            AudioLevelMeter {
+                id: levelMeter
+                gainDb: Number(audioPreview.modelData.gainDb)
+                onLevelDbChanged: backend.setAudioTrackLevelDb(
+                                      audioPreview.modelData.index, levelDb)
+            }
+
+            MediaPlayer {
+                id: trackPlayer
+                source: audioPreview.previewEnabled ? trimWindow.previewSource : ""
+                audioOutput: trackAudioOutput
+                audioBufferOutput: levelMeter
+                activeVideoTrack: -1
+                activeAudioTrack: audioPreview.modelData.index
+
+                onMediaStatusChanged: Qt.callLater(function() {
+                    audioPreview.synchronize(true)
+                })
+            }
+
+            Component.onDestruction: {
+                levelMeter.reset()
+                backend.setAudioTrackLevelDb(audioPreview.modelData.index, -60)
+            }
+        }
+    }
+
+    Timer {
+        interval: 400
+        repeat: true
+        running: trimWindow.visible
+                 && player.playbackState === MediaPlayer.PlayingState
+        onTriggered: trimWindow.synchronizeAudioPreviews(false)
     }
 
     ColumnLayout {
@@ -140,7 +237,7 @@ ApplicationWindow {
                 onClicked: audioTrackMenu.popup()
 
                 ToolTip.visible: hovered
-                ToolTip.text: "選択した音声は出力時にすべて合成します。プレビューでは先頭の選択トラックを再生します。"
+                ToolTip.text: "選択した音声はプレビューと出力の両方ですべて合成します。"
 
                 Menu {
                     id: audioTrackMenu
@@ -239,7 +336,10 @@ ApplicationWindow {
             from: 0
             to: Math.max(1, player.duration)
             value: player.position
-            onMoved: player.position = value
+            onMoved: {
+                player.position = value
+                trimWindow.synchronizeAudioPreviews(true)
+            }
         }
 
         Label {
@@ -338,6 +438,7 @@ ApplicationWindow {
 
     AudioMixerWindow {
         id: audioMixerWindow
+        previewPlaying: player.playbackState === MediaPlayer.PlayingState
     }
 
     function formatTime(milliseconds) {
