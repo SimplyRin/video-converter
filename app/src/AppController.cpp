@@ -606,10 +606,7 @@ void AppController::setAudioTrackSelected(int trackIndex, bool selected)
         return;
     }
     m_audioTracks[trackIndex].selected = selected;
-    for (AudioTrackInfo &track : m_audioTracks) {
-        track.hasRecommendation = false;
-    }
-    if (m_monitoredAudioTrack >= 0) {
+    if (!selected && m_monitoredAudioTrack == trackIndex) {
         m_monitoredAudioTrack = -1;
         resetAudioTrackLevels();
         emit audioMonitorChanged();
@@ -628,13 +625,9 @@ void AppController::setAllAudioTracksSelected(bool selected)
             track.selected = selected;
             changed = true;
         }
-        if (track.hasRecommendation) {
-            track.hasRecommendation = false;
-            changed = true;
-        }
     }
     if (changed) {
-        if (m_monitoredAudioTrack >= 0) {
+        if (!selected && m_monitoredAudioTrack >= 0) {
             m_monitoredAudioTrack = -1;
             resetAudioTrackLevels();
             emit audioMonitorChanged();
