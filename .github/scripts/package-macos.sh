@@ -3,17 +3,16 @@
 set -euo pipefail
 
 version="${1:?Version is required}"
-build_number="${2:?Build number is required}"
-output_dir="${3:?Output directory is required}"
+output_dir="${2:?Output directory is required}"
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
-ffmpeg_cache_dir="${4:-${RUNNER_TEMP:?RUNNER_TEMP is required}/discordvideo-ffmpeg-cache/macos-arm64}"
+ffmpeg_cache_dir="${3:-${RUNNER_TEMP:?RUNNER_TEMP is required}/discordvideo-ffmpeg-cache/macos-arm64}"
 # shellcheck source=ffmpeg-macos-versions.env
 source "${repo_root}/.github/scripts/ffmpeg-macos-versions.env"
 package_root="${RUNNER_TEMP:?RUNNER_TEMP is required}/package/DiscordVideo"
 app_source="${repo_root}/build/macos/DiscordVideo.app"
 app_bundle="${package_root}/DiscordVideo.app"
 ffmpeg_dir="${app_bundle}/Contents/MacOS/tools/ffmpeg"
-asset_path="${output_dir}/macOS-arm64_v${version}+${build_number}.zip"
+asset_path="${output_dir}/macOS-arm64_v${version}.zip"
 
 mkdir -p "${package_root}" "${output_dir}"
 ditto "${app_source}" "${app_bundle}"

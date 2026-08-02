@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [Parameter(Mandatory = $true)][string]$BuildNumber,
     [Parameter(Mandatory = $true)][string]$PackageDirectory,
     [Parameter(Mandatory = $true)][string]$OutputDirectory
 )
@@ -9,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $packageSource = (Resolve-Path $PackageDirectory).Path
 $installerScript = Join-Path $repoRoot ".github/installer/DiscordVideo.iss"
-$expectedInstaller = Join-Path $OutputDirectory "Windows-x64-Setup_v$Version+$BuildNumber.exe"
+$expectedInstaller = Join-Path $OutputDirectory "Windows-x64-Setup_v$Version.exe"
 
 if (-not (Test-Path (Join-Path $packageSource "DiscordVideo.exe"))) {
     throw "The packaged DiscordVideo launcher was not found"
@@ -32,7 +31,6 @@ if (-not $iscc) {
 }
 
 $env:DISCORDVIDEO_INSTALLER_VERSION = $Version
-$env:DISCORDVIDEO_INSTALLER_BUILD_NUMBER = $BuildNumber
 $env:DISCORDVIDEO_INSTALLER_PACKAGE_SOURCE = $packageSource
 $env:DISCORDVIDEO_INSTALLER_OUTPUT = (Resolve-Path $OutputDirectory).Path
 $env:DISCORDVIDEO_INSTALLER_ICON = (Resolve-Path (Join-Path $repoRoot "app/assets/DiscordVideo.ico")).Path
@@ -44,7 +42,6 @@ try {
     }
 } finally {
     Remove-Item Env:DISCORDVIDEO_INSTALLER_VERSION -ErrorAction SilentlyContinue
-    Remove-Item Env:DISCORDVIDEO_INSTALLER_BUILD_NUMBER -ErrorAction SilentlyContinue
     Remove-Item Env:DISCORDVIDEO_INSTALLER_PACKAGE_SOURCE -ErrorAction SilentlyContinue
     Remove-Item Env:DISCORDVIDEO_INSTALLER_OUTPUT -ErrorAction SilentlyContinue
     Remove-Item Env:DISCORDVIDEO_INSTALLER_ICON -ErrorAction SilentlyContinue

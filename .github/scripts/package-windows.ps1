@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [Parameter(Mandatory = $true)][string]$BuildNumber,
     [Parameter(Mandatory = $true)][string]$OutputDirectory
 )
 
@@ -102,6 +101,6 @@ if ($unexpectedRuntimeFilesAtPackageRoot) {
     throw "Unexpected executable or DLL files were placed outside the bin directory"
 }
 
-$assetPath = Join-Path $OutputDirectory "Windows-x64_v$Version+$BuildNumber.zip"
+$assetPath = Join-Path $OutputDirectory "Windows-x64_v$Version.zip"
 Compress-Archive -Path $packageRoot -DestinationPath $assetPath -CompressionLevel Optimal
 Write-Output $assetPath

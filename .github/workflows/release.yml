@@ -32,7 +32,6 @@ jobs:
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             base_version="${GITHUB_REF_NAME#v}"
-            version="${base_version}"
             release_tag="${GITHUB_REF_NAME}"
             is_prerelease="false"
           else
@@ -50,8 +49,6 @@ jobs:
             fi
 
             base_version="${latest_stable_tag#v}"
-            short_sha="$(git rev-parse "${GITHUB_SHA}" | cut -c1-7)"
-            version="${base_version}-PRE_${short_sha}"
             is_prerelease="true"
           fi
 
@@ -67,14 +64,19 @@ jobs:
           fi
 
           if [[ "${is_prerelease}" == "true" ]]; then
+            IFS='.' read -r version_major version_minor version_patch <<< "${base_version}"
+            next_patch=$((10#${version_patch} + 1))
+            version="${version_major}.${version_minor}.${next_patch}-SNAPSHOT_${build_number}"
             release_tag="v${version}"
+          else
+            version="${base_version}+${build_number}"
           fi
 
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
           echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
           echo "is_prerelease=${is_prerelease}" >> "${GITHUB_OUTPUT}"
-          echo "Build version: ${version}+${build_number}"
+          echo "Build version: ${version}"
           echo "Release tag: ${release_tag}"
 
   windows:
@@ -83,7 +85,6 @@ jobs:
     runs-on: windows-latest
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
-      BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
     steps:
       - uses: actions/checkout@v6
 
@@ -111,7 +112,7 @@ jobs:
           cmake -S app -B build/windows -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_CXX_COMPILER=$compiler" `
-            "-DDISCORDVIDEO_VERSION=$env:VERSION+$env:BUILD_NUMBER"
+            "-DDISCORDVIDEO_VERSION=$env:VERSION"
 
       - name: Build
         run: cmake --build build/windows --config Release --parallel
@@ -121,7 +122,6 @@ jobs:
         run: |
           & .github/scripts/package-windows.ps1 `
             -Version $env:VERSION `
-            -BuildNumber $env:BUILD_NUMBER `
             -OutputDirectory '${{ runner.temp }}/release-assets'
 
       - name: Install Inno Setup
@@ -137,7 +137,6 @@ jobs:
         run: |
           & .github/scripts/build-windows-installer.ps1 `
             -Version $env:VERSION `
-            -BuildNumber $env:BUILD_NUMBER `
             -PackageDirectory '${{ runner.temp }}/package/DiscordVideo' `
             -OutputDirectory '${{ runner.temp }}/release-assets'
 
@@ -156,7 +155,6 @@ jobs:
     runs-on: macos-14
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
-      BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
     steps:
       - uses: actions/checkout@v6
 
@@ -217,7 +215,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
-          -DDISCORDVIDEO_VERSION=${VERSION}+${BUILD_NUMBER}
+          -DDISCORDVIDEO_VERSION=${VERSION}
 
       - name: Build
         run: cmake --build build/macos --config Release --parallel
@@ -233,7 +231,6 @@ jobs:
         run: |
           bash .github/scripts/package-macos.sh \
             "${VERSION}" \
-            "${BUILD_NUMBER}" \
             "${RUNNER_TEMP}/release-assets" \
             "${RUNNER_TEMP}/discordvideo-ffmpeg-cache/macos-arm64"
 
@@ -254,7 +251,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.metadata.outputs.version }}
-      BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
       RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
       IS_PRERELEASE: ${{ needs.metadata.outputs.is_prerelease }}
     steps:
@@ -267,9 +263,9 @@ jobs:
       - name: Verify release assets
         shell: bash
         run: |
-          test -f "release-assets/Windows-x64_v${VERSION}+${BUILD_NUMBER}.zip"
-          test -f "release-assets/Windows-x64-Setup_v${VERSION}+${BUILD_NUMBER}.exe"
-          test -f "release-assets/macOS-arm64_v${VERSION}+${BUILD_NUMBER}.zip"
+          test -f "release-assets/Windows-x64_v${VERSION}.zip"
+          test -f "release-assets/Windows-x64-Setup_v${VERSION}.exe"
+          test -f "release-assets/macOS-arm64_v${VERSION}.zip"
 
       - name: Create GitHub Release
         shell: bash
@@ -277,7 +273,7 @@ jobs:
           tag="${RELEASE_TAG}"
           notes_file="${RUNNER_TEMP}/release-notes.md"
           {
-            echo "DiscordVideo v${VERSION}+${BUILD_NUMBER}"
+            echo "DiscordVideo v${VERSION}"
             echo
             echo "- Windows x64 portable ZIP (Qt runtime and BtbN GPL FFmpeg included)"
             echo "- Windows x64 installer"

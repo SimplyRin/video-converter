@@ -42,7 +42,8 @@ constexpr double minimumAudioLevelDb = -60.0;
 
 struct ReleaseVersion {
     QVersionNumber baseVersion;
-    QString prereleaseCommit;
+    QString prereleaseIdentity;
+    qint64 snapshotBuildNumber = -1;
     bool prerelease = false;
     bool valid = false;
 };
@@ -51,7 +52,7 @@ ReleaseVersion parseReleaseVersion(QString version)
 {
     version = version.trimmed();
     static const QRegularExpression pattern(
-        QStringLiteral(R"(^v?(\d+)\.(\d+)\.(\d+)(?:-PRE_([0-9a-f]{7,40}))?(?:\+(\d+))?$)"),
+        QStringLiteral(R"(^v?(\d+)\.(\d+)\.(\d+)(?:(?:-SNAPSHOT_(\d+))|(?:-PRE_([0-9a-f]{7,40})))?(?:\+(\d+))?$)"),
         QRegularExpression::CaseInsensitiveOption);
     const QRegularExpressionMatch match = pattern.match(version);
     if (!match.hasMatch()) {
@@ -70,8 +71,20 @@ ReleaseVersion parseReleaseVersion(QString version)
 
     ReleaseVersion result;
     result.baseVersion = QVersionNumber(major, minor, patch);
-    result.prereleaseCommit = match.captured(4).toLower();
-    result.prerelease = !result.prereleaseCommit.isEmpty();
+    const QString snapshotBuild = match.captured(4);
+    const QString legacyCommit = match.captured(5).toLower();
+    if (!snapshotBuild.isEmpty()) {
+        bool snapshotOk = false;
+        result.snapshotBuildNumber = snapshotBuild.toLongLong(&snapshotOk);
+        if (!snapshotOk) {
+            return {};
+        }
+        result.prereleaseIdentity = snapshotBuild;
+    } else if (!legacyCommit.isEmpty()) {
+        // Keep older PRE releases readable during the SNAPSHOT transition.
+        result.prereleaseIdentity = legacyCommit;
+    }
+    result.prerelease = !result.prereleaseIdentity.isEmpty();
     result.valid = true;
     return result;
 }
@@ -83,8 +96,14 @@ int compareReleaseChannels(const ReleaseVersion &left, const ReleaseVersion &rig
         return baseComparison;
     }
     if (left.prerelease != right.prerelease) {
-        // PRE builds are snapshots made after their base stable tag.
-        return left.prerelease ? 1 : -1;
+        // A stable release supersedes snapshots of the same target version.
+        return left.prerelease ? -1 : 1;
+    }
+    if (left.prerelease
+        && left.snapshotBuildNumber >= 0
+        && right.snapshotBuildNumber >= 0
+        && left.snapshotBuildNumber != right.snapshotBuildNumber) {
+        return left.snapshotBuildNumber > right.snapshotBuildNumber ? 1 : -1;
     }
     return 0;
 }
@@ -95,11 +114,6 @@ bool isReleaseNewerThanCurrent(const ReleaseVersion &release,
     const int channelComparison = compareReleaseChannels(release, current);
     if (channelComparison != 0) {
         return channelComparison > 0;
-    }
-    if (release.prerelease && current.prerelease) {
-        // The caller selected the newest published snapshot for this base. A
-        // different commit therefore represents an available snapshot update.
-        return release.prereleaseCommit != current.prereleaseCommit;
     }
     return false;
 }
