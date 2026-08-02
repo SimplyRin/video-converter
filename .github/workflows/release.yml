@@ -157,7 +157,6 @@ jobs:
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
       BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
-      FFMPEG_CACHE_DIR: ${{ runner.temp }}/discordvideo-ffmpeg-cache/macos-arm64
     steps:
       - uses: actions/checkout@v6
 
@@ -176,14 +175,15 @@ jobs:
         name: Restore compiled FFmpeg cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.FFMPEG_CACHE_DIR }}
+          path: ${{ runner.temp }}/discordvideo-ffmpeg-cache/macos-arm64
           key: ${{ steps.ffmpeg-cache-key.outputs.key }}
 
       - id: ffmpeg-cache-validation
         name: Validate compiled FFmpeg cache
         shell: bash
         run: |
-          if bash .github/scripts/build-ffmpeg-macos.sh --validate "${FFMPEG_CACHE_DIR}"; then
+          if bash .github/scripts/build-ffmpeg-macos.sh --validate \
+              "${RUNNER_TEMP}/discordvideo-ffmpeg-cache/macos-arm64"; then
             echo "valid=true" >> "${GITHUB_OUTPUT}"
             echo "A valid compiled FFmpeg cache will be used."
           else
@@ -207,7 +207,9 @@ jobs:
 
       - name: Build FFmpeg from source
         if: steps.ffmpeg-cache-validation.outputs.valid != 'true'
-        run: bash .github/scripts/build-ffmpeg-macos.sh "${FFMPEG_CACHE_DIR}"
+        run: >-
+          bash .github/scripts/build-ffmpeg-macos.sh
+          "${RUNNER_TEMP}/discordvideo-ffmpeg-cache/macos-arm64"
 
       - name: Configure
         run: >-
@@ -233,7 +235,7 @@ jobs:
             "${VERSION}" \
             "${BUILD_NUMBER}" \
             "${RUNNER_TEMP}/release-assets" \
-            "${FFMPEG_CACHE_DIR}"
+            "${RUNNER_TEMP}/discordvideo-ffmpeg-cache/macos-arm64"
 
       - name: Upload macOS asset
         uses: actions/upload-artifact@v4
