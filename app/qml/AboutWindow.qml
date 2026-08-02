@@ -198,6 +198,28 @@ ApplicationWindow {
                         onClicked: backend.openLatestRelease()
                     }
 
+                    CheckBox {
+                        Layout.fillWidth: true
+                        text: "プリリリース版を対象とする"
+                        checked: backend.includePrereleaseUpdates
+                        enabled: !backend.checkingForUpdates && !backend.prereleaseBuild
+                        onToggled: backend.setIncludePrereleaseUpdates(checked)
+
+                        ToolTip.visible: hovered
+                        ToolTip.text: backend.prereleaseBuild
+                                      ? "プリリリース版のアプリでは自動的に有効になります。"
+                                      : "GitHub の Pre-release もアップデート候補として確認します。"
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: backend.prereleaseBuild
+                        text: "このアプリはプリリリース版のため、プリリリース更新を自動的に確認します。"
+                        wrapMode: Text.WordWrap
+                        color: window.palette.placeholderText
+                        font.pixelSize: 11
+                    }
+
                     Button {
                         Layout.fillWidth: true
                         text: backend.checkingForUpdates ? "アップデートを確認中..." : "もう一度確認する"

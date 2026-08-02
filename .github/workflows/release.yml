@@ -5,12 +5,6 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Artifact version (MAJOR.MINOR.FIX)"
-        required: true
-        default: "0.0.0"
-        type: string
 
 permissions:
   contents: read
@@ -25,6 +19,8 @@ jobs:
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       build_number: ${{ steps.metadata.outputs.build_number }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,17 +29,34 @@ jobs:
       - id: metadata
         name: Calculate version and build number
         shell: bash
-        env:
-          DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            version="${GITHUB_REF_NAME#v}"
+            base_version="${GITHUB_REF_NAME#v}"
+            version="${base_version}"
+            release_tag="${GITHUB_REF_NAME}"
+            is_prerelease="false"
           else
-            version="${DISPATCH_VERSION}"
+            latest_stable_tag=""
+            while IFS= read -r candidate; do
+              if [[ "${candidate}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                latest_stable_tag="${candidate}"
+                break
+              fi
+            done < <(git tag --sort=-version:refname)
+
+            if [[ -z "${latest_stable_tag}" ]]; then
+              echo "No stable vMAJOR.MINOR.FIX tag was found." >&2
+              exit 1
+            fi
+
+            base_version="${latest_stable_tag#v}"
+            short_sha="$(git rev-parse "${GITHUB_SHA}" | cut -c1-7)"
+            version="${base_version}-PRE_${short_sha}"
+            is_prerelease="true"
           fi
 
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Unsupported version: ${version}" >&2
+          if [[ ! "${base_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unsupported base version: ${base_version}" >&2
             exit 1
           fi
 
@@ -53,9 +66,16 @@ jobs:
             exit 1
           fi
 
+          if [[ "${is_prerelease}" == "true" ]]; then
+            release_tag="v${version}"
+          fi
+
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "is_prerelease=${is_prerelease}" >> "${GITHUB_OUTPUT}"
           echo "Build version: ${version}+${build_number}"
+          echo "Release tag: ${release_tag}"
 
   windows:
     name: Windows x64
@@ -91,7 +111,7 @@ jobs:
           cmake -S app -B build/windows -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_CXX_COMPILER=$compiler" `
-            "-DDISCORDVIDEO_VERSION=$env:VERSION"
+            "-DDISCORDVIDEO_VERSION=$env:VERSION+$env:BUILD_NUMBER"
 
       - name: Build
         run: cmake --build build/windows --config Release --parallel
@@ -159,7 +179,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
-          -DDISCORDVIDEO_VERSION=${VERSION}
+          -DDISCORDVIDEO_VERSION=${VERSION}+${BUILD_NUMBER}
 
       - name: Build
         run: cmake --build build/macos --config Release --parallel
@@ -188,7 +208,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [metadata, windows, macos]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,6 +216,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.metadata.outputs.version }}
       BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
+      RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+      IS_PRERELEASE: ${{ needs.metadata.outputs.is_prerelease }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -213,7 +235,7 @@ jobs:
       - name: Create GitHub Release
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           notes_file="${RUNNER_TEMP}/release-notes.md"
           {
             echo "DiscordVideo v${VERSION}+${BUILD_NUMBER}"
@@ -227,15 +249,30 @@ jobs:
             gh release upload "${tag}" release-assets/* \
               --repo "${GITHUB_REPOSITORY}" \
               --clobber
+            release_flags=()
+            if [[ "${IS_PRERELEASE}" == "true" ]]; then
+              release_flags+=(--prerelease)
+            fi
             gh release edit "${tag}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "${tag}" \
-              --notes-file "${notes_file}"
+              --notes-file "${notes_file}" \
+              "${release_flags[@]}"
           else
-            gh release create "${tag}" \
-              release-assets/* \
-              --repo "${GITHUB_REPOSITORY}" \
-              --verify-tag \
-              --title "${tag}" \
-              --notes-file "${notes_file}"
+            if [[ "${IS_PRERELEASE}" == "true" ]]; then
+              gh release create "${tag}" \
+                release-assets/* \
+                --repo "${GITHUB_REPOSITORY}" \
+                --target "${GITHUB_SHA}" \
+                --prerelease \
+                --title "${tag}" \
+                --notes-file "${notes_file}"
+            else
+              gh release create "${tag}" \
+                release-assets/* \
+                --repo "${GITHUB_REPOSITORY}" \
+                --verify-tag \
+                --title "${tag}" \
+                --notes-file "${notes_file}"
+            fi
           fi

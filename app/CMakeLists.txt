@@ -3,7 +3,11 @@
 cmake_minimum_required(VERSION 3.21)
 
 set(DISCORDVIDEO_VERSION "2.0.0" CACHE STRING "DiscordVideo release version")
-project(DiscordVideo VERSION "${DISCORDVIDEO_VERSION}" LANGUAGES CXX)
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" DISCORDVIDEO_PROJECT_VERSION "${DISCORDVIDEO_VERSION}")
+if(NOT DISCORDVIDEO_PROJECT_VERSION)
+    message(FATAL_ERROR "DISCORDVIDEO_VERSION must start with MAJOR.MINOR.PATCH")
+endif()
+project(DiscordVideo VERSION "${DISCORDVIDEO_PROJECT_VERSION}" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -74,7 +78,7 @@ target_link_libraries(discord-video PRIVATE
 )
 
 target_compile_definitions(discord-video PRIVATE
-    DISCORDVIDEO_VERSION="${PROJECT_VERSION}"
+    DISCORDVIDEO_VERSION="${DISCORDVIDEO_VERSION}"
 )
 
 set_target_properties(discord-video PROPERTIES

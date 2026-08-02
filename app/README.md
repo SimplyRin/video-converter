@@ -64,6 +64,7 @@ Windows版はルートの`DiscordVideo.exe`を起動します。これは外部D
 - トリミング範囲と選択トラックを`-c copy`で無劣化の一時MKVへ保存してから行う最終エンコード
 - 一時MKVをエンコード完了後に削除する任意オプション（既定では保持）
 - 起動後にGitHub Releaseを非同期確認し、更新がある場合に情報ボタンで通知
+- 設定に応じたGitHub Pre-releaseの更新確認（プリリリース版アプリでは自動的に有効）
 - アプリ情報画面から最新のGitHub Releaseページを開くアップデート案内
 - FFmpeg の進捗表示とキャンセル
 - Windows Explorer / macOS Finder での出力ファイル表示

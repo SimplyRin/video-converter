@@ -22,6 +22,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QUuid>
 #include <QVersionNumber>
@@ -38,6 +39,77 @@ constexpr double containerSafetyFactor = 0.97;
 constexpr double minimumAudioGainDb = -30.0;
 constexpr double maximumAudioGainDb = 30.0;
 
+struct ReleaseVersion {
+    QVersionNumber baseVersion;
+    QString prereleaseCommit;
+    bool prerelease = false;
+    bool valid = false;
+};
+
+ReleaseVersion parseReleaseVersion(QString version)
+{
+    version = version.trimmed();
+    static const QRegularExpression pattern(
+        QStringLiteral(R"(^v?(\d+)\.(\d+)\.(\d+)(?:-PRE_([0-9a-f]{7,40}))?(?:\+(\d+))?$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = pattern.match(version);
+    if (!match.hasMatch()) {
+        return {};
+    }
+
+    bool majorOk = false;
+    bool minorOk = false;
+    bool patchOk = false;
+    const int major = match.captured(1).toInt(&majorOk);
+    const int minor = match.captured(2).toInt(&minorOk);
+    const int patch = match.captured(3).toInt(&patchOk);
+    if (!majorOk || !minorOk || !patchOk) {
+        return {};
+    }
+
+    ReleaseVersion result;
+    result.baseVersion = QVersionNumber(major, minor, patch);
+    result.prereleaseCommit = match.captured(4).toLower();
+    result.prerelease = !result.prereleaseCommit.isEmpty();
+    result.valid = true;
+    return result;
+}
+
+int compareReleaseChannels(const ReleaseVersion &left, const ReleaseVersion &right)
+{
+    const int baseComparison = QVersionNumber::compare(left.baseVersion, right.baseVersion);
+    if (baseComparison != 0) {
+        return baseComparison;
+    }
+    if (left.prerelease != right.prerelease) {
+        // PRE builds are snapshots made after their base stable tag.
+        return left.prerelease ? 1 : -1;
+    }
+    return 0;
+}
+
+bool isReleaseNewerThanCurrent(const ReleaseVersion &release,
+                               const ReleaseVersion &current)
+{
+    const int channelComparison = compareReleaseChannels(release, current);
+    if (channelComparison != 0) {
+        return channelComparison > 0;
+    }
+    if (release.prerelease && current.prerelease) {
+        // The caller selected the newest published snapshot for this base. A
+        // different commit therefore represents an available snapshot update.
+        return release.prereleaseCommit != current.prereleaseCommit;
+    }
+    return false;
+}
+
+bool isValidReleaseUrl(const QUrl &url)
+{
+    return url.isValid()
+        && url.scheme() == QStringLiteral("https")
+        && url.host().compare(QStringLiteral("github.com"), Qt::CaseInsensitive) == 0;
+}
+
 QString readEmbeddedTextFile(const QString &path)
 {
     QFile file(path);
@@ -51,6 +123,11 @@ QString readEmbeddedTextFile(const QString &path)
 AppController::AppController(QObject *parent)
     : QObject(parent)
 {
+    m_prereleaseBuild = parseReleaseVersion(currentVersion()).prerelease;
+    const QSettings settings;
+    m_includePrereleaseUpdates = m_prereleaseBuild
+        || settings.value(QStringLiteral("updates/includePrereleases"), false).toBool();
+
     m_probeProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_trackProbeProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_audioAnalysisProcess.setProcessChannelMode(QProcess::SeparateChannels);
@@ -356,6 +433,16 @@ bool AppController::updateAvailable() const
     return m_updateAvailable;
 }
 
+bool AppController::includePrereleaseUpdates() const
+{
+    return m_includePrereleaseUpdates;
+}
+
+bool AppController::prereleaseBuild() const
+{
+    return m_prereleaseBuild;
+}
+
 QString AppController::currentVersion() const
 {
     return QCoreApplication::applicationVersion();
@@ -647,11 +734,19 @@ void AppController::checkForUpdates()
     }
 
     m_checkingForUpdates = true;
-    m_updateStatus = QStringLiteral("GitHub Release を確認中...");
+    m_updateAvailable = false;
+    m_latestVersion.clear();
+    m_latestReleaseUrl.clear();
+    const bool includePrereleases = m_includePrereleaseUpdates;
+    m_updateStatus = includePrereleases
+        ? QStringLiteral("GitHub Release を確認中（プリリリースを含む）...")
+        : QStringLiteral("GitHub Release を確認中...");
     emit updateStateChanged();
 
-    QNetworkRequest request(
-        QUrl(QStringLiteral("https://api.github.com/repos/SimplyRin/video-converter/releases/latest")));
+    const QUrl apiUrl(includePrereleases
+        ? QStringLiteral("https://api.github.com/repos/SimplyRin/video-converter/releases?per_page=100")
+        : QStringLiteral("https://api.github.com/repos/SimplyRin/video-converter/releases/latest"));
+    QNetworkRequest request(apiUrl);
     request.setRawHeader(QByteArrayLiteral("Accept"),
                          QByteArrayLiteral("application/vnd.github+json"));
     request.setRawHeader(QByteArrayLiteral("X-GitHub-Api-Version"),
@@ -663,7 +758,7 @@ void AppController::checkForUpdates()
     request.setTransferTimeout(10000);
 
     QNetworkReply *reply = m_networkManager.get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, includePrereleases] {
         m_checkingForUpdates = false;
 
         if (reply->error() != QNetworkReply::NoError) {
@@ -676,65 +771,109 @@ void AppController::checkForUpdates()
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(reply->readAll(), &parseError);
         reply->deleteLater();
-        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        const bool expectedDocumentType = includePrereleases
+            ? document.isArray()
+            : document.isObject();
+        if (parseError.error != QJsonParseError::NoError || !expectedDocumentType) {
             m_updateStatus = QStringLiteral("GitHub Release の応答を読み取れませんでした。");
             emit updateStateChanged();
             return;
         }
 
-        const QJsonObject release = document.object();
-        const QString tagName = release.value(QStringLiteral("tag_name")).toString().trimmed();
-        const QUrl releaseUrl(release.value(QStringLiteral("html_url")).toString());
-
-        QString latestVersionText = tagName;
-        if (latestVersionText.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) {
-            latestVersionText.remove(0, 1);
-        }
-        QString currentVersionText = currentVersion().trimmed();
-        if (currentVersionText.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)) {
-            currentVersionText.remove(0, 1);
+        QJsonArray releases;
+        if (includePrereleases) {
+            releases = document.array();
+        } else {
+            releases.append(document.object());
         }
 
-        qsizetype latestSuffixIndex = 0;
-        qsizetype currentSuffixIndex = 0;
-        const QVersionNumber latest = QVersionNumber::fromString(latestVersionText,
-                                                                 &latestSuffixIndex);
-        const QVersionNumber current = QVersionNumber::fromString(currentVersionText,
-                                                                  &currentSuffixIndex);
-        const bool validVersions = !latest.isNull()
-            && !current.isNull()
-            && latestSuffixIndex == latestVersionText.size()
-            && currentSuffixIndex == currentVersionText.size();
-        const bool validReleaseUrl = releaseUrl.isValid()
-            && releaseUrl.scheme() == QStringLiteral("https")
-            && releaseUrl.host().compare(QStringLiteral("github.com"), Qt::CaseInsensitive) == 0;
-        if (!validVersions || !validReleaseUrl) {
+        QJsonObject selectedRelease;
+        ReleaseVersion selectedVersion;
+        QString selectedPublishedAt;
+        for (const QJsonValue &value : releases) {
+            const QJsonObject release = value.toObject();
+            if (release.value(QStringLiteral("draft")).toBool()) {
+                continue;
+            }
+            if (release.value(QStringLiteral("prerelease")).toBool()
+                && !includePrereleases) {
+                continue;
+            }
+
+            const QString tag = release.value(QStringLiteral("tag_name")).toString().trimmed();
+            const ReleaseVersion candidateVersion = parseReleaseVersion(tag);
+            const QUrl candidateUrl(release.value(QStringLiteral("html_url")).toString());
+            if (!candidateVersion.valid || !isValidReleaseUrl(candidateUrl)) {
+                continue;
+            }
+
+            const QString candidatePublishedAt = release.value(QStringLiteral("published_at"))
+                                                     .toString();
+            const int versionComparison = selectedRelease.isEmpty()
+                ? 1
+                : compareReleaseChannels(candidateVersion, selectedVersion);
+            const bool newerSnapshotWithSameBase = versionComparison == 0
+                && candidateVersion.prerelease
+                && candidatePublishedAt > selectedPublishedAt;
+            if (versionComparison > 0 || newerSnapshotWithSameBase) {
+                selectedRelease = release;
+                selectedVersion = candidateVersion;
+                selectedPublishedAt = candidatePublishedAt;
+            }
+        }
+
+        const ReleaseVersion installedVersion = parseReleaseVersion(currentVersion());
+        if (selectedRelease.isEmpty() || !installedVersion.valid) {
             m_updateStatus = QStringLiteral("GitHub Release のバージョン情報を読み取れませんでした。");
             emit updateStateChanged();
             return;
         }
 
+        const QString tagName = selectedRelease.value(QStringLiteral("tag_name"))
+                                    .toString()
+                                    .trimmed();
+        const QUrl releaseUrl(selectedRelease.value(QStringLiteral("html_url")).toString());
         m_latestVersion = tagName.startsWith(QLatin1Char('v'), Qt::CaseInsensitive)
             ? tagName
             : QStringLiteral("v%1").arg(tagName);
         m_latestReleaseUrl = releaseUrl;
-        m_updateAvailable = QVersionNumber::compare(latest, current) > 0;
+        m_updateAvailable = isReleaseNewerThanCurrent(selectedVersion, installedVersion);
         if (m_updateAvailable) {
             m_updateStatus = QStringLiteral("新しいバージョン %1 を利用できます。")
                                  .arg(m_latestVersion);
         } else {
-            m_updateStatus = QStringLiteral("最新版を使用しています (v%1)。")
-                                 .arg(currentVersionText);
+            m_updateStatus = includePrereleases
+                ? QStringLiteral("最新版を使用しています (v%1、プリリリースを含む)。")
+                      .arg(currentVersion())
+                : QStringLiteral("最新版を使用しています (v%1)。").arg(currentVersion());
         }
         emit updateStateChanged();
     });
+}
+
+void AppController::setIncludePrereleaseUpdates(bool include)
+{
+    if (m_prereleaseBuild) {
+        include = true;
+    }
+    if (m_includePrereleaseUpdates == include) {
+        return;
+    }
+
+    m_includePrereleaseUpdates = include;
+    QSettings settings;
+    settings.setValue(QStringLiteral("updates/includePrereleases"), include);
+    emit updateStateChanged();
+    checkForUpdates();
 }
 
 void AppController::openLatestRelease()
 {
     const QUrl url = m_latestReleaseUrl.isValid()
         ? m_latestReleaseUrl
-        : QUrl(QStringLiteral("https://github.com/SimplyRin/video-converter/releases/latest"));
+        : QUrl(m_includePrereleaseUpdates
+                   ? QStringLiteral("https://github.com/SimplyRin/video-converter/releases")
+                   : QStringLiteral("https://github.com/SimplyRin/video-converter/releases/latest"));
     QDesktopServices::openUrl(url);
 }
 

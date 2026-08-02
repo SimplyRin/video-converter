@@ -30,6 +30,8 @@ class AppController final : public QObject
     Q_PROPERTY(QString audioAnalysisStatus READ audioAnalysisStatus NOTIFY audioAnalysisChanged)
     Q_PROPERTY(bool checkingForUpdates READ checkingForUpdates NOTIFY updateStateChanged)
     Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY updateStateChanged)
+    Q_PROPERTY(bool includePrereleaseUpdates READ includePrereleaseUpdates WRITE setIncludePrereleaseUpdates NOTIFY updateStateChanged)
+    Q_PROPERTY(bool prereleaseBuild READ prereleaseBuild NOTIFY updateStateChanged)
     Q_PROPERTY(QString currentVersion READ currentVersion NOTIFY updateStateChanged)
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY updateStateChanged)
     Q_PROPERTY(QUrl latestReleaseUrl READ latestReleaseUrl NOTIFY updateStateChanged)
@@ -57,6 +59,8 @@ public:
     [[nodiscard]] QString audioAnalysisStatus() const;
     [[nodiscard]] bool checkingForUpdates() const;
     [[nodiscard]] bool updateAvailable() const;
+    [[nodiscard]] bool includePrereleaseUpdates() const;
+    [[nodiscard]] bool prereleaseBuild() const;
     [[nodiscard]] QString currentVersion() const;
     [[nodiscard]] QString latestVersion() const;
     [[nodiscard]] QUrl latestReleaseUrl() const;
@@ -80,6 +84,7 @@ public:
     Q_INVOKABLE void cancelEncoding();
     Q_INVOKABLE void revealLatestOutput();
     Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE void setIncludePrereleaseUpdates(bool include);
     Q_INVOKABLE void openLatestRelease();
     Q_INVOKABLE void openProjectRepository();
 
@@ -180,6 +185,8 @@ private:
     QNetworkAccessManager m_networkManager;
     bool m_checkingForUpdates = false;
     bool m_updateAvailable = false;
+    bool m_includePrereleaseUpdates = false;
+    bool m_prereleaseBuild = false;
     QString m_latestVersion;
     QUrl m_latestReleaseUrl;
     QString m_updateStatus = QStringLiteral("アップデートはまだ確認されていません。");

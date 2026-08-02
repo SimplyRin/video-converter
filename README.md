@@ -53,6 +53,10 @@ WindowsのSetup版は、Program Filesへのインストール、スタートメ�
 
 ### ブランチの手動ビルド
 
-GitHubのActions画面で`Build and release`を開き、`Run workflow`から対象ブランチとテスト用
-バージョンを選択すると、そのブランチをビルドできます。手動実行ではGitHub Releaseを作成せず、
-WindowsポータブルZIP、Windows Setup、macOS ZIPをActionsのArtifactsへアップロードします。
+GitHubのActions画面で`Build and release`を開き、`Run workflow`から対象ブランチを選択すると、
+そのブランチをプリリリースとしてビルド・公開します。リポジトリの最新の安定版タグとコミットSHAの
+先頭7桁を使い、`vMAJOR.MINOR.FIX-PRE_COMMIT`形式のGitタグを作成します。
+
+例えば、最新の安定版タグが`v1.0.9`、対象コミットが`d2e8f98...`の場合、GitHub Releaseのタグは
+`v1.0.9-PRE_d2e8f98`となり、Pre-releaseとして公開されます。配布ファイルとアプリ本体の完全
+バージョンには、従来どおり`calculate-build-number.sh`の`BUILDNUM`も加わります。
