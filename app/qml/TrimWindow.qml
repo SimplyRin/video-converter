@@ -64,9 +64,16 @@ ApplicationWindow {
         backend.resetAudioTrackLevels()
     }
 
+    AudioOutput {
+        id: silentVideoAudioOutput
+        muted: true
+        volume: 0
+    }
+
     MediaPlayer {
         id: player
         source: trimWindow.previewSource
+        audioOutput: silentVideoAudioOutput
         videoOutput: videoOutput
         activeVideoTrack: backend.selectedVideoTrack
         activeAudioTrack: -1
@@ -91,10 +98,26 @@ ApplicationWindow {
 
             required property var modelData
             property bool trackSelected: Boolean(modelData.selected)
-            property bool previewEnabled: backend.monitoredAudioTrack >= 0
-                                          ? backend.monitoredAudioTrack === modelData.index
-                                          : trackSelected
+            property bool previewEnabled: trackSelected
+                                          && (backend.monitoredAudioTrack < 0
+                                              || backend.monitoredAudioTrack
+                                                 === modelData.index)
             visible: false
+
+            function applyConfiguredTrack() {
+                const configuredTrack = Number(modelData.index)
+                if (!previewEnabled
+                    || configuredTrack < 0
+                    || trackPlayer.audioTracks.length <= configuredTrack) {
+                    return false
+                }
+                if (trackPlayer.activeAudioTrack !== configuredTrack) {
+                    trackPlayer.activeAudioTrack = configuredTrack
+                    levelMeter.reset()
+                    backend.setAudioTrackLevelDb(configuredTrack, -60)
+                }
+                return trackPlayer.activeAudioTrack === configuredTrack
+            }
 
             function synchronize(forcePosition) {
                 if (!previewEnabled || trimWindow.previewSource.toString().length === 0) {
@@ -109,6 +132,12 @@ ApplicationWindow {
                            || trackPlayer.mediaStatus === MediaPlayer.BufferedMedia
                            || trackPlayer.mediaStatus === MediaPlayer.StalledMedia
                 if (!ready)
+                    return
+
+                // Some Qt multimedia backends restore audio track 0 while a
+                // new source is loading. Never start audio until our explicit
+                // track selection has been accepted by the backend.
+                if (!applyConfiguredTrack())
                     return
 
                 if (forcePosition || Math.abs(trackPlayer.position - player.position) > 120)
@@ -135,6 +164,9 @@ ApplicationWindow {
 
             AudioOutput {
                 id: trackAudioOutput
+                muted: !audioPreview.previewEnabled
+                       || trackPlayer.activeAudioTrack
+                          !== Number(audioPreview.modelData.index)
                 volume: Math.max(0, Math.min(1,
                             0.05 * Math.pow(10, Number(audioPreview.modelData.gainDb) / 20)))
             }
@@ -152,9 +184,20 @@ ApplicationWindow {
                 audioOutput: trackAudioOutput
                 audioBufferOutput: levelMeter
                 activeVideoTrack: -1
-                activeAudioTrack: audioPreview.modelData.index
+                activeAudioTrack: -1
+
+                onAudioTracksChanged: Qt.callLater(function() {
+                    audioPreview.applyConfiguredTrack()
+                    audioPreview.synchronize(true)
+                })
+
+                onActiveAudioTrackChanged: {
+                    if (activeAudioTrack !== Number(audioPreview.modelData.index))
+                        levelMeter.reset()
+                }
 
                 onMediaStatusChanged: Qt.callLater(function() {
+                    audioPreview.applyConfiguredTrack()
                     audioPreview.synchronize(true)
                 })
             }

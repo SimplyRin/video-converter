@@ -367,12 +367,14 @@ ApplicationWindow {
                             text: checked ? "モニター中" : "モニター"
                             checkable: true
                             checked: backend.monitoredAudioTrack === modelData.index
-                            enabled: !backend.busy
+                            enabled: modelData.selected && !backend.busy
                             onClicked: backend.setMonitoredAudioTrack(
                                            checked ? modelData.index : -1)
 
                             ToolTip.visible: hovered
-                            ToolTip.text: "出力設定を変えず、このトラックだけをプレビューします。"
+                            ToolTip.text: modelData.selected
+                                          ? "選択中のこのトラックだけをプレビューします。"
+                                          : "先にこのトラックを出力対象としてチェックしてください。"
                         }
                     }
                 }

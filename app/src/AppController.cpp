@@ -609,6 +609,11 @@ void AppController::setAudioTrackSelected(int trackIndex, bool selected)
     for (AudioTrackInfo &track : m_audioTracks) {
         track.hasRecommendation = false;
     }
+    if (m_monitoredAudioTrack >= 0) {
+        m_monitoredAudioTrack = -1;
+        resetAudioTrackLevels();
+        emit audioMonitorChanged();
+    }
     emit mediaTracksChanged();
 }
 
@@ -629,6 +634,11 @@ void AppController::setAllAudioTracksSelected(bool selected)
         }
     }
     if (changed) {
+        if (m_monitoredAudioTrack >= 0) {
+            m_monitoredAudioTrack = -1;
+            resetAudioTrackLevels();
+            emit audioMonitorChanged();
+        }
         emit mediaTracksChanged();
     }
 }
@@ -677,6 +687,7 @@ void AppController::resetAudioTrackLevels()
 void AppController::setMonitoredAudioTrack(int trackIndex)
 {
     if (trackIndex < -1 || trackIndex >= m_audioTracks.size()
+        || (trackIndex >= 0 && !m_audioTracks.at(trackIndex).selected)
         || m_monitoredAudioTrack == trackIndex) {
         return;
     }
