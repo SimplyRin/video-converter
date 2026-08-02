@@ -13,6 +13,8 @@
 
 #include "AudioTrackModel.h"
 
+class QWindow;
+
 class AppController final : public QObject
 {
     Q_OBJECT
@@ -115,6 +117,11 @@ public:
     Q_INVOKABLE void setIncludePrereleaseUpdates(bool include);
     Q_INVOKABLE void openLatestRelease();
     Q_INVOKABLE void openProjectRepository();
+    // Qt centres a dialog on its parent window. A dialog taller than the
+    // parent therefore lands partly outside the screen when the parent sits
+    // near an edge, and a title bar above the top edge cannot be dragged back.
+    // Push the whole frame into the parent screen's available area.
+    Q_INVOKABLE void keepWindowOnScreen(QWindow *window) const;
 
 signals:
     void selectedFileChanged();

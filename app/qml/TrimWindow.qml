@@ -41,6 +41,9 @@ ApplicationWindow {
         backend.resetAudioTrackLevels()
         previewSource = url
         show()
+        // Only valid once the window exists, because the frame size that the
+        // clamp has to account for is decided by the window manager.
+        backend.keepWindowOnScreen(trimWindow)
         raise()
         requestActivate()
         player.play()

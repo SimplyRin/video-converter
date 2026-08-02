@@ -22,8 +22,10 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QWindow>
 #include <QUuid>
 #include <QVersionNumber>
 #include <QVariantMap>
@@ -1121,6 +1123,44 @@ void AppController::openProjectRepository()
 {
     QDesktopServices::openUrl(
         QUrl(QStringLiteral("https://github.com/SimplyRin/video-converter")));
+}
+
+void AppController::keepWindowOnScreen(QWindow *window) const
+{
+    if (window == nullptr) {
+        return;
+    }
+
+    // Prefer the parent's screen so a dialog never jumps to another monitor.
+    const QWindow *parent = window->transientParent();
+    const QScreen *screen = parent != nullptr ? parent->screen() : window->screen();
+    if (screen == nullptr) {
+        return;
+    }
+
+    // geometry() is the client area, so add the frame to keep the title bar
+    // itself on screen rather than just the content below it.
+    const QMargins frame = window->frameMargins();
+    const QRect available = screen->availableGeometry();
+    QRect frameRect = window->geometry().marginsAdded(frame);
+
+    if (frameRect.width() <= available.width()) {
+        frameRect.moveLeft(std::clamp(frameRect.left(),
+                                      available.left(),
+                                      available.right() - frameRect.width() + 1));
+    } else {
+        frameRect.moveLeft(available.left());
+    }
+
+    if (frameRect.height() <= available.height()) {
+        frameRect.moveTop(std::clamp(frameRect.top(),
+                                     available.top(),
+                                     available.bottom() - frameRect.height() + 1));
+    } else {
+        frameRect.moveTop(available.top());
+    }
+
+    window->setPosition(frameRect.topLeft() + QPoint(frame.left(), frame.top()));
 }
 
 void AppController::locateTools()

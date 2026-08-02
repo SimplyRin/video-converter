@@ -20,6 +20,9 @@ ApplicationWindow {
     function showSection(index) {
         tabs.currentIndex = index
         show()
+        // Only valid once the window exists, because the frame size that the
+        // clamp has to account for is decided by the window manager.
+        backend.keepWindowOnScreen(window)
         raise()
         requestActivate()
     }
