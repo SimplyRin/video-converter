@@ -25,6 +25,63 @@ ApplicationWindow {
     property double endPosition: -1
     property url previewSource: ""
 
+    // The mixer opens docked to the right edge of this window and follows it
+    // while docked. Dragging the mixer itself undocks it, after which the two
+    // windows move independently.
+    property bool mixerDocked: false
+    // Set while we reposition the mixer ourselves, so its own position change
+    // is not mistaken for the user dragging it.
+    property bool movingMixer: false
+    property real mixerAnchorX: 0
+    property real mixerAnchorY: 0
+    property real lastX: 0
+    property real lastY: 0
+
+    function openAudioMixer() {
+        audioMixerWindow.openMixer()
+        backend.dockWindowToRight(audioMixerWindow, trimWindow)
+        lastX = trimWindow.x
+        lastY = trimWindow.y
+        mixerAnchorX = audioMixerWindow.x
+        mixerAnchorY = audioMixerWindow.y
+        mixerDocked = true
+    }
+
+    function shiftDockedMixer(deltaX, deltaY) {
+        if (!mixerDocked || !audioMixerWindow.visible)
+            return
+        movingMixer = true
+        audioMixerWindow.x += deltaX
+        audioMixerWindow.y += deltaY
+        mixerAnchorX = audioMixerWindow.x
+        mixerAnchorY = audioMixerWindow.y
+        // Cleared after the position change signals have been delivered.
+        Qt.callLater(function() { trimWindow.movingMixer = false })
+    }
+
+    // A mixer position we did not set came from the user dragging it, so the
+    // window stops following and stays where it was dropped.
+    function undockMixerIfUserMoved() {
+        if (!mixerDocked || movingMixer)
+            return
+        if (audioMixerWindow.x !== mixerAnchorX
+            || audioMixerWindow.y !== mixerAnchorY) {
+            mixerDocked = false
+        }
+    }
+
+    onXChanged: {
+        const deltaX = trimWindow.x - lastX
+        lastX = trimWindow.x
+        shiftDockedMixer(deltaX, 0)
+    }
+
+    onYChanged: {
+        const deltaY = trimWindow.y - lastY
+        lastY = trimWindow.y
+        shiftDockedMixer(0, deltaY)
+    }
+
     function synchronizeAudioPreviews(forcePosition) {
         for (let index = 0; index < audioPreviewPlayers.count; ++index) {
             const preview = audioPreviewPlayers.objectAt(index)
@@ -354,7 +411,7 @@ ApplicationWindow {
 
                     MenuItem {
                         text: "音量ミキサーを開く…"
-                        onTriggered: audioMixerWindow.openMixer()
+                        onTriggered: trimWindow.openAudioMixer()
                     }
                 }
             }
@@ -363,7 +420,7 @@ ApplicationWindow {
                 visible: backend.audioTrackModel.count > 0
                 enabled: !backend.busy
                 text: "ミキサー"
-                onClicked: audioMixerWindow.openMixer()
+                onClicked: trimWindow.openAudioMixer()
             }
 
             Label {
@@ -530,6 +587,8 @@ ApplicationWindow {
     AudioMixerWindow {
         id: audioMixerWindow
         previewPlaying: player.playbackState === MediaPlayer.PlayingState
+        onXChanged: trimWindow.undockMixerIfUserMoved()
+        onYChanged: trimWindow.undockMixerIfUserMoved()
     }
 
     function formatTime(milliseconds) {

@@ -122,6 +122,10 @@ public:
     // near an edge, and a title bar above the top edge cannot be dragged back.
     // Push the whole frame into the parent screen's available area.
     Q_INVOKABLE void keepWindowOnScreen(QWindow *window) const;
+    // Butt `window` against the right edge of `anchor` with their tops
+    // aligned. When the pair would not fit side by side, `anchor` slides left
+    // first so the docked window does not end up overlapping it.
+    Q_INVOKABLE void dockWindowToRight(QWindow *window, QWindow *anchor) const;
 
 signals:
     void selectedFileChanged();

@@ -1163,6 +1163,41 @@ void AppController::keepWindowOnScreen(QWindow *window) const
     window->setPosition(frameRect.topLeft() + QPoint(frame.left(), frame.top()));
 }
 
+void AppController::dockWindowToRight(QWindow *window, QWindow *anchor) const
+{
+    if (window == nullptr || anchor == nullptr) {
+        return;
+    }
+
+    const QScreen *screen = anchor->screen();
+    if (screen == nullptr) {
+        return;
+    }
+
+    const QRect available = screen->availableGeometry();
+    const QMargins anchorMargins = anchor->frameMargins();
+    const QMargins windowMargins = window->frameMargins();
+    QRect anchorFrame = anchor->geometry().marginsAdded(anchorMargins);
+    const QRect windowFrame = window->geometry().marginsAdded(windowMargins);
+
+    // Slide the anchor left when the two windows would not fit side by side,
+    // otherwise the docked window is clamped back on screen and covers it.
+    const int pairWidth = anchorFrame.width() + windowFrame.width();
+    if (pairWidth <= available.width()) {
+        const int overflow = anchorFrame.left() + pairWidth - 1 - available.right();
+        if (overflow > 0) {
+            anchorFrame.moveLeft(std::max(available.left(), anchorFrame.left() - overflow));
+            anchor->setPosition(anchorFrame.topLeft()
+                                + QPoint(anchorMargins.left(), anchorMargins.top()));
+        }
+    }
+
+    // setPosition() takes the client-area origin, so add the frame back.
+    window->setPosition(QPoint(anchorFrame.right() + 1 + windowMargins.left(),
+                               anchorFrame.top() + windowMargins.top()));
+    keepWindowOnScreen(window);
+}
+
 void AppController::locateTools()
 {
     m_ffmpegPath = locateTool(QStringLiteral("ffmpeg"));
