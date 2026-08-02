@@ -82,6 +82,7 @@ ApplicationWindow {
             Layout.fillWidth: true
 
             TabButton { text: "概要" }
+            TabButton { text: "設定" }
             TabButton { text: backend.updateAvailable ? "アップデートあり" : "アップデート" }
             TabButton { text: "ライセンス" }
         }
@@ -132,6 +133,93 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: "GitHub でソースコードを見る"
                         onClicked: backend.openProjectRepository()
+                    }
+
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            ScrollView {
+                id: settingsScroll
+                clip: true
+
+                ColumnLayout {
+                    width: settingsScroll.availableWidth
+                    spacing: 14
+
+                    GroupBox {
+                        Layout.fillWidth: true
+                        title: "エンコード"
+
+                        GridLayout {
+                            anchors.fill: parent
+                            columns: 2
+                            columnSpacing: 12
+                            rowSpacing: 10
+
+                            Label { text: "既定の目標ファイルサイズ:" }
+
+                            RowLayout {
+                                spacing: 6
+
+                                SpinBox {
+                                    id: defaultSizeSpin
+                                    from: 1
+                                    to: 4096
+                                    editable: true
+                                    enabled: !backend.busy
+                                    value: backend.defaultTargetSizeMiB
+                                    onValueModified: backend.setDefaultTargetSizeMiB(value)
+                                }
+
+                                Label { text: "MB" }
+                            }
+
+                            Label { text: "音声ビットレート:" }
+
+                            RowLayout {
+                                spacing: 6
+
+                                ComboBox {
+                                    id: audioBitrateBox
+                                    Layout.preferredWidth: 110
+                                    enabled: !backend.busy
+                                    model: [32, 64, 96, 128, 160, 192, 256, 320]
+                                    currentIndex: Math.max(0, model.indexOf(backend.audioBitrateKbps))
+                                    onActivated: backend.setAudioBitrateKbps(model[currentIndex])
+                                }
+
+                                Label { text: "kbps" }
+                            }
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "目標ファイルサイズはメイン画面で毎回変更できます。ここで設定した値は、"
+                              + "入力欄を空のままにしたときに使われます。"
+                        font.pixelSize: 12
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "映像のビットレートは、目標ファイルサイズから音声ビットレートを差し引いた残りです。"
+                              + "音声を上げるほど音質は良くなりますが、その分だけ映像のビットレートが下がります。"
+                              + "既定の 96 kbps は容量を優先した値で、音質を重視する場合は 128 kbps 以上をおすすめします。"
+                        font.pixelSize: 12
+                        color: "#9d94a6"
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        visible: backend.audioBitrateKbps >= 192
+                        text: "短い動画では、音声に大きな割合を割り当てると映像のビットレートが不足して"
+                              + "変換できないことがあります。"
+                        font.pixelSize: 12
+                        color: "#ffb300"
                     }
 
                     Item { Layout.fillHeight: true }

@@ -72,7 +72,8 @@ ApplicationWindow {
                 text: "i"
                 flat: true
                 font.bold: true
-                onClicked: aboutWindow.showSection(backend.updateAvailable ? 1 : 0)
+                // Tabs are 概要 / 設定 / アップデート / ライセンス.
+                onClicked: aboutWindow.showSection(backend.updateAvailable ? 2 : 0)
                 Accessible.name: backend.updateAvailable
                                  ? "アップデートがあります。アプリ情報を開く"
                                  : "アプリ情報を開く"
@@ -175,7 +176,8 @@ ApplicationWindow {
                 Layout.preferredHeight: 30
                 enabled: !backend.busy
                 horizontalAlignment: TextInput.AlignRight
-                placeholderText: "10"
+                // Left empty, the field encodes at the configured default.
+                placeholderText: String(backend.defaultTargetSizeMiB)
                 inputMethodHints: Qt.ImhDigitsOnly
                 validator: IntValidator { bottom: 1; top: 99999 }
                 font.pixelSize: 12

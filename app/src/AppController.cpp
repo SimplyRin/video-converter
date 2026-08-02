@@ -35,7 +35,14 @@
 #include <cmath>
 
 namespace {
-constexpr int audioBitrateKbps = 96;
+// Encoding defaults, overridable from the settings tab and remembered in
+// QSettings. 96 kbps favours size; raising it takes bitrate away from video,
+// because the video share is whatever the size budget leaves over.
+constexpr int defaultAudioBitrateKbps = 96;
+constexpr int minimumAudioBitrateKbps = 32;
+constexpr int maximumAudioBitrateKbps = 320;
+constexpr int fallbackTargetSizeMiB = 10;
+constexpr int maximumTargetSizeMiB = 4096;
 constexpr int minimumVideoBitrateKbps = 50;
 constexpr double containerSafetyFactor = 0.97;
 constexpr double minimumAudioGainDb = -30.0;
@@ -154,6 +161,14 @@ AppController::AppController(QObject *parent)
     const QSettings settings;
     m_includePrereleaseUpdates = m_prereleaseBuild
         || settings.value(QStringLiteral("updates/includePrereleases"), false).toBool();
+    m_defaultTargetSizeMiB = std::clamp(
+        settings.value(QStringLiteral("encoding/defaultTargetSizeMiB"),
+                       fallbackTargetSizeMiB).toInt(),
+        1, maximumTargetSizeMiB);
+    m_audioBitrateKbps = std::clamp(
+        settings.value(QStringLiteral("encoding/audioBitrateKbps"),
+                       defaultAudioBitrateKbps).toInt(),
+        minimumAudioBitrateKbps, maximumAudioBitrateKbps);
 
     m_waveformProcess.setProcessChannelMode(QProcess::SeparateChannels);
     connect(&m_waveformProcess, &QProcess::readyReadStandardOutput,
@@ -682,6 +697,41 @@ void AppController::resetAudioTrackLevels()
 bool AppController::audioWaveformsAnalyzing() const
 {
     return m_audioWaveformsAnalyzing;
+}
+
+int AppController::defaultTargetSizeMiB() const
+{
+    return m_defaultTargetSizeMiB;
+}
+
+int AppController::audioBitrateKbps() const
+{
+    return m_audioBitrateKbps;
+}
+
+void AppController::setDefaultTargetSizeMiB(int sizeMiB)
+{
+    const int adjusted = std::clamp(sizeMiB, 1, maximumTargetSizeMiB);
+    if (m_defaultTargetSizeMiB == adjusted) {
+        return;
+    }
+    m_defaultTargetSizeMiB = adjusted;
+    QSettings settings;
+    settings.setValue(QStringLiteral("encoding/defaultTargetSizeMiB"), adjusted);
+    emit encodingSettingsChanged();
+}
+
+void AppController::setAudioBitrateKbps(int bitrateKbps)
+{
+    const int adjusted = std::clamp(bitrateKbps, minimumAudioBitrateKbps,
+                                    maximumAudioBitrateKbps);
+    if (m_audioBitrateKbps == adjusted) {
+        return;
+    }
+    m_audioBitrateKbps = adjusted;
+    QSettings settings;
+    settings.setValue(QStringLiteral("encoding/audioBitrateKbps"), adjusted);
+    emit encodingSettingsChanged();
 }
 
 bool AppController::audioMeteringAvailable() const
@@ -1694,7 +1744,9 @@ void AppController::startEncoding(int targetSizeMiB,
         targetBits * containerSafetyFactor / durationSeconds / 1000.0));
     const int outputAudioBitrateKbps = selectedAudioTrackIndices().isEmpty()
         ? 0
-        : audioBitrateKbps;
+        : m_audioBitrateKbps;
+    // Video gets whatever the size budget leaves after audio, so a higher
+    // audio bitrate is paid for out of the video bitrate.
     const int videoBitrateKbps = totalBitrateKbps - outputAudioBitrateKbps;
 
     if (videoBitrateKbps < minimumVideoBitrateKbps) {
@@ -1806,7 +1858,7 @@ void AppController::prepareEncodingAttempts(int videoBitrateKbps)
                   << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
         if (!audioTracks.isEmpty()) {
             arguments << QStringLiteral("-c:a") << QStringLiteral("aac")
-                      << QStringLiteral("-b:a") << QStringLiteral("%1k").arg(audioBitrateKbps);
+                      << QStringLiteral("-b:a") << QStringLiteral("%1k").arg(m_audioBitrateKbps);
         } else {
             arguments << QStringLiteral("-an");
         }

@@ -30,6 +30,9 @@ class AppController final : public QObject
     Q_PROPERTY(AudioTrackModel *audioTrackModel READ audioTrackModel CONSTANT)
     Q_PROPERTY(QVariantList audioTrackLevels READ audioTrackLevels NOTIFY audioTrackLevelsChanged)
     Q_PROPERTY(bool audioWaveformsAnalyzing READ audioWaveformsAnalyzing NOTIFY audioWaveformsAnalyzingChanged)
+    // Encoding preferences, persisted in QSettings.
+    Q_PROPERTY(int defaultTargetSizeMiB READ defaultTargetSizeMiB WRITE setDefaultTargetSizeMiB NOTIFY encodingSettingsChanged)
+    Q_PROPERTY(int audioBitrateKbps READ audioBitrateKbps WRITE setAudioBitrateKbps NOTIFY encodingSettingsChanged)
     Q_PROPERTY(bool audioMeteringAvailable READ audioMeteringAvailable NOTIFY audioMeteringAvailableChanged)
     Q_PROPERTY(int selectedVideoTrack READ selectedVideoTrack WRITE setSelectedVideoTrack NOTIFY mediaTracksChanged)
     Q_PROPERTY(int monitoredAudioTrack READ monitoredAudioTrack WRITE setMonitoredAudioTrack NOTIFY audioMonitorChanged)
@@ -63,6 +66,10 @@ public:
     [[nodiscard]] AudioTrackModel *audioTrackModel() const;
     [[nodiscard]] QVariantList audioTrackLevels() const;
     [[nodiscard]] bool audioWaveformsAnalyzing() const;
+    [[nodiscard]] int defaultTargetSizeMiB() const;
+    [[nodiscard]] int audioBitrateKbps() const;
+    Q_INVOKABLE void setDefaultTargetSizeMiB(int sizeMiB);
+    Q_INVOKABLE void setAudioBitrateKbps(int bitrateKbps);
     [[nodiscard]] bool audioMeteringAvailable() const;
     [[nodiscard]] int selectedVideoTrack() const;
     [[nodiscard]] int monitoredAudioTrack() const;
@@ -140,6 +147,7 @@ signals:
     void mediaTracksChanged();
     void audioTrackLevelsChanged();
     void audioWaveformsAnalyzingChanged();
+    void encodingSettingsChanged();
     void audioMeteringAvailableChanged();
     // Emitted when a waveform finishes decoding or the mix is recomputed. QML
     // canvases repaint on this instead of binding to a list.
@@ -254,6 +262,8 @@ private:
     // Holds a trailing odd byte when a read splits a 16-bit sample.
     QByteArray m_waveformCarry;
     bool m_audioWaveformsAnalyzing = false;
+    int m_defaultTargetSizeMiB = 10;
+    int m_audioBitrateKbps = 96;
     bool m_audioMeteringAvailable = false;
     int m_selectedVideoTrack = 0;
     int m_monitoredAudioTrack = -1;
