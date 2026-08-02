@@ -17,6 +17,72 @@ ApplicationWindow {
     color: palette.window
     property bool previewPlaying: false
 
+    // Playback position and trim range, in milliseconds, mirrored from the trim
+    // window. The waveforms themselves are decoded from the file and cover the
+    // whole track, so these only decide where the markers sit.
+    property real mediaPosition: 0
+    property real mediaDuration: 0
+    property real trimStart: -1
+    property real trimEnd: -1
+
+    readonly property real positionRatio: mediaDuration > 0
+        ? Math.max(0, Math.min(1, mediaPosition / mediaDuration)) : 0
+    readonly property real trimStartRatio: mediaDuration > 0 && trimStart >= 0
+        ? Math.max(0, Math.min(1, trimStart / mediaDuration)) : 0
+    readonly property real trimEndRatio: mediaDuration > 0 && trimEnd >= 0
+        ? Math.max(0, Math.min(1, trimEnd / mediaDuration)) : 1
+
+    // Visible slice of the timeline, as fractions of the media duration. Every
+    // strip shares it so the tracks stay lined up while zooming and panning.
+    property real viewStart: 0
+    property real viewEnd: 1
+    readonly property real viewSpan: Math.max(minimumViewSpan, viewEnd - viewStart)
+    readonly property bool zoomed: viewSpan < 1
+    // Do not zoom past roughly a second across the strip; beyond that the
+    // stored 2 ms buckets would just be stretched.
+    readonly property real minimumViewSpan: mediaDuration > 0
+        ? Math.min(1, 1000 / mediaDuration) : 1
+
+    function setView(start, span) {
+        const clampedSpan = Math.max(minimumViewSpan, Math.min(1, span))
+        const clampedStart = Math.max(0, Math.min(1 - clampedSpan, start))
+        viewStart = clampedStart
+        viewEnd = clampedStart + clampedSpan
+    }
+
+    // Keeps the timeline point under `anchorRatio` where it is, so zooming with
+    // the wheel homes in on whatever the pointer is over.
+    function zoomBy(factor, anchorRatio) {
+        const span = viewSpan / factor
+        const anchor = Math.max(viewStart, Math.min(viewEnd, anchorRatio))
+        const offset = viewSpan > 0 ? (anchor - viewStart) / viewSpan : 0.5
+        setView(anchor - offset * span, span)
+    }
+
+    function zoomToFit() { setView(0, 1) }
+
+    function panBy(deltaRatio) { setView(viewStart + deltaRatio, viewSpan) }
+
+    // Follows the playhead while it runs off the visible slice.
+    function revealPosition() {
+        if (!zoomed || mediaDuration <= 0)
+            return
+        if (positionRatio < viewStart || positionRatio > viewEnd)
+            setView(positionRatio - viewSpan / 2, viewSpan)
+    }
+
+    onMediaDurationChanged: zoomToFit()
+    onPositionRatioChanged: revealPosition()
+
+    function formatTime(milliseconds) {
+        if (!Number.isFinite(milliseconds) || milliseconds < 0)
+            milliseconds = 0
+        const totalSeconds = Math.floor(milliseconds / 1000)
+        const minutes = Math.floor(totalSeconds / 60)
+        const seconds = totalSeconds % 60
+        return minutes + ":" + String(seconds).padStart(2, "0")
+    }
+
     onPreviewPlayingChanged: {
         if (!previewPlaying)
             meteringGracePeriod.elapsed = false
@@ -44,11 +110,26 @@ ApplicationWindow {
         property string caption: ""
         property color accentColor: "#ec64a5"
         property real currentLevelDb: -60
+        property bool showTimeAxis: false
+        // The waveform comes from the file, so it stays fully drawn whether or
+        // not playback is running. `active` now only governs the live readout.
+        property bool emphasized: true
+        property bool hasWaveform: false
+        readonly property bool waveformPending: !hasWaveform
+                                                && backend.audioWaveformsAnalyzing
 
+        // One value per pixel of the visible slice, so the payload stays the
+        // same size no matter how far the view is zoomed in.
         function samples() {
-            return strip.trackIndex < 0
-                   ? backend.audioMixWaveform()
-                   : backend.audioTrackWaveform(strip.trackIndex)
+            return backend.audioWaveformRange(strip.trackIndex,
+                                              mixerWindow.viewStart,
+                                              mixerWindow.viewEnd,
+                                              Math.max(2, Math.round(waveCanvas.width)))
+        }
+
+        // Maps a timeline fraction onto an x inside the canvas.
+        function xAt(ratio) {
+            return waveCanvas.width * (ratio - mixerWindow.viewStart) / mixerWindow.viewSpan
         }
 
         function readLevelDb() {
@@ -65,14 +146,31 @@ ApplicationWindow {
         onActiveChanged: {
             if (!active)
                 currentLevelDb = -60
-            waveCanvas.requestPaint()
+        }
+
+        onEmphasizedChanged: waveCanvas.requestPaint()
+
+        Component.onCompleted: strip.hasWaveform = strip.samples().length >= 2
+
+        // The picture only changes when a track finishes decoding or the mix is
+        // recomputed; the playhead is a separate overlay so seeking never has
+        // to repaint the canvas.
+        // Zooming and panning change which slice is drawn, so the canvas has to
+        // be repainted; the playhead and the trim shading are plain overlays.
+        Connections {
+            target: mixerWindow
+            function onViewStartChanged() { waveCanvas.requestPaint() }
+            function onViewEndChanged() { waveCanvas.requestPaint() }
         }
 
         Connections {
             target: backend
-            function onAudioWaveformSampled() {
-                strip.currentLevelDb = strip.active ? strip.readLevelDb() : -60
+            function onAudioWaveformsChanged() {
+                strip.hasWaveform = strip.samples().length >= 2
                 waveCanvas.requestPaint()
+            }
+            function onAudioTrackLevelsChanged() {
+                strip.currentLevelDb = strip.active ? strip.readLevelDb() : -60
             }
         }
 
@@ -148,12 +246,110 @@ ApplicationWindow {
 
                 context.fillStyle = Qt.rgba(strip.accentColor.r, strip.accentColor.g,
                                             strip.accentColor.b,
-                                            strip.active ? 0.28 : 0.12)
+                                            strip.emphasized ? 0.28 : 0.12)
                 context.fill()
-                context.strokeStyle = strip.active ? "#ffffff" : "#7d7486"
+                context.strokeStyle = strip.emphasized ? "#ffffff" : "#7d7486"
                 context.lineWidth = 1.5
                 context.stroke()
             }
+        }
+
+        // Everything outside the trim range is dimmed, so the picture shows at
+        // a glance which audio actually reaches the output. Both bands are
+        // clipped to the canvas, which keeps them right while zoomed.
+        Item {
+            anchors.fill: waveCanvas
+            clip: true
+            z: 1
+
+            Rectangle {
+                x: -waveCanvas.width
+                width: waveCanvas.width + strip.xAt(mixerWindow.trimStartRatio)
+                height: parent.height
+                visible: mixerWindow.trimStartRatio > 0
+                color: "#0d0a10"
+                opacity: 0.6
+            }
+
+            Rectangle {
+                x: strip.xAt(mixerWindow.trimEndRatio)
+                width: waveCanvas.width * 2
+                height: parent.height
+                visible: mixerWindow.trimEndRatio < 1
+                color: "#0d0a10"
+                opacity: 0.6
+            }
+        }
+
+        Rectangle {
+            id: playhead
+            visible: mixerWindow.mediaDuration > 0
+                     && mixerWindow.positionRatio >= mixerWindow.viewStart
+                     && mixerWindow.positionRatio <= mixerWindow.viewEnd
+            x: waveCanvas.x + strip.xAt(mixerWindow.positionRatio)
+            y: waveCanvas.y
+            width: 1
+            height: waveCanvas.height
+            color: strip.active ? "#ffffff" : "#9d94a6"
+            z: 3
+        }
+
+        Label {
+            anchors.left: waveCanvas.left
+            anchors.bottom: waveCanvas.bottom
+            z: 2
+            visible: strip.showTimeAxis && mixerWindow.mediaDuration > 0
+            text: mixerWindow.formatTime(mixerWindow.viewStart * mixerWindow.mediaDuration)
+            color: "#9d94a6"
+            font.family: "monospace"
+            font.pixelSize: 10
+        }
+
+        Label {
+            anchors.right: waveCanvas.right
+            anchors.bottom: waveCanvas.bottom
+            z: 2
+            visible: strip.showTimeAxis && mixerWindow.mediaDuration > 0
+            text: mixerWindow.formatTime(mixerWindow.viewEnd * mixerWindow.mediaDuration)
+            color: "#9d94a6"
+            font.family: "monospace"
+            font.pixelSize: 10
+        }
+
+        // Wheel zooms around the pointer, drag pans, like a waveform editor.
+        MouseArea {
+            anchors.fill: waveCanvas
+            z: 4
+            acceptedButtons: Qt.LeftButton
+            cursorShape: mixerWindow.zoomed ? Qt.OpenHandCursor : Qt.ArrowCursor
+            property real pressRatio: 0
+
+            onWheel: function(wheel) {
+                const ratio = mixerWindow.viewStart
+                            + (wheel.x / width) * mixerWindow.viewSpan
+                mixerWindow.zoomBy(wheel.angleDelta.y > 0 ? 1.25 : 1 / 1.25, ratio)
+                wheel.accepted = true
+            }
+
+            onPressed: function(mouse) {
+                pressRatio = mixerWindow.viewStart + (mouse.x / width) * mixerWindow.viewSpan
+            }
+
+            onPositionChanged: function(mouse) {
+                if (!pressed || !mixerWindow.zoomed)
+                    return
+                const ratio = mixerWindow.viewStart + (mouse.x / width) * mixerWindow.viewSpan
+                mixerWindow.panBy(pressRatio - ratio)
+            }
+        }
+
+        Label {
+            anchors.centerIn: waveCanvas
+            z: 2
+            visible: strip.waveformPending
+            text: "波形を解析中…"
+            color: "#9d94a6"
+            font.pixelSize: 11
         }
     }
 
@@ -193,11 +389,73 @@ ApplicationWindow {
             }
         }
 
+        // Zoom applies to every strip at once, so the tracks stay aligned.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            enabled: mixerWindow.mediaDuration > 0
+
+            Label {
+                text: "表示範囲:"
+                font.pixelSize: 12
+            }
+
+            Button {
+                text: "－"
+                implicitWidth: 32
+                enabled: mixerWindow.zoomed
+                ToolTip.visible: hovered
+                ToolTip.text: "縮小"
+                onClicked: mixerWindow.zoomBy(1 / 1.6, mixerWindow.positionRatio)
+            }
+
+            Button {
+                text: "＋"
+                implicitWidth: 32
+                enabled: mixerWindow.viewSpan > mixerWindow.minimumViewSpan
+                ToolTip.visible: hovered
+                ToolTip.text: "拡大"
+                onClicked: mixerWindow.zoomBy(1.6, mixerWindow.positionRatio)
+            }
+
+            Button {
+                text: "全体"
+                enabled: mixerWindow.zoomed
+                onClicked: mixerWindow.zoomToFit()
+            }
+
+            ScrollBar {
+                id: viewScrollBar
+                Layout.fillWidth: true
+                orientation: Qt.Horizontal
+                policy: ScrollBar.AlwaysOn
+                visible: mixerWindow.zoomed
+                size: mixerWindow.viewSpan
+                position: mixerWindow.viewStart
+                // Only a drag on the bar itself may move the view; otherwise
+                // this would fight the binding while zooming or following.
+                onPositionChanged: {
+                    if (pressed)
+                        mixerWindow.setView(position, mixerWindow.viewSpan)
+                }
+            }
+
+            Label {
+                text: mixerWindow.zoomed
+                      ? Math.round(1 / mixerWindow.viewSpan) + "倍"
+                      : "全体"
+                font.pixelSize: 11
+                color: "#9d94a6"
+            }
+        }
+
         WaveformStrip {
             Layout.fillWidth: true
             Layout.preferredHeight: 92
             trackIndex: -1
             active: mixerWindow.previewPlaying
+            emphasized: true
+            showTimeAxis: true
             accentColor: "#ec64a5"
             caption: backend.monitoredAudioTrack >= 0
                      ? "音声トラック " + backend.monitoredAudioTrack + " をモニター中"
@@ -208,8 +466,9 @@ ApplicationWindow {
             Layout.fillWidth: true
             visible: mixerWindow.previewPlaying && !backend.audioMeteringAvailable
                      && meteringGracePeriod.elapsed
-            text: "このQtメディアバックエンドは音声バッファを提供しないため、波形とレベル表示は動作しません"
-                  + "（FFmpegバックエンドが必要です）。スピーカーへのモニター出力は影響を受けません。"
+            text: "このQtメディアバックエンドは音声バッファを提供しないため、リアルタイムのレベル表示は動作しません"
+                  + "（FFmpegバックエンドが必要です）。波形はファイルから解析するため影響を受けず、"
+                  + "スピーカーへのモニター出力も影響を受けません。"
             wrapMode: Text.WordWrap
             font.pixelSize: 11
             color: "#ffb300"
@@ -403,6 +662,7 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             trackIndex: trackRow.trackIndex
                             active: mixerWindow.previewPlaying && trackRow.previewed
+                            emphasized: trackRow.previewed
                             accentColor: backend.monitoredAudioTrack === trackRow.trackIndex
                                          ? "#ec64a5" : "#43a047"
                             caption: trackRow.previewed

@@ -29,8 +29,7 @@ class AppController final : public QObject
     Q_PROPERTY(QVariantList videoTracks READ videoTracks NOTIFY mediaTracksChanged)
     Q_PROPERTY(AudioTrackModel *audioTrackModel READ audioTrackModel CONSTANT)
     Q_PROPERTY(QVariantList audioTrackLevels READ audioTrackLevels NOTIFY audioTrackLevelsChanged)
-    Q_PROPERTY(bool audioWaveformCapturing READ audioWaveformCapturing WRITE setAudioWaveformCapturing NOTIFY audioWaveformCapturingChanged)
-    Q_PROPERTY(int audioWaveformSampleCount READ audioWaveformSampleCount CONSTANT)
+    Q_PROPERTY(bool audioWaveformsAnalyzing READ audioWaveformsAnalyzing NOTIFY audioWaveformsAnalyzingChanged)
     Q_PROPERTY(bool audioMeteringAvailable READ audioMeteringAvailable NOTIFY audioMeteringAvailableChanged)
     Q_PROPERTY(int selectedVideoTrack READ selectedVideoTrack WRITE setSelectedVideoTrack NOTIFY mediaTracksChanged)
     Q_PROPERTY(int monitoredAudioTrack READ monitoredAudioTrack WRITE setMonitoredAudioTrack NOTIFY audioMonitorChanged)
@@ -63,8 +62,7 @@ public:
     [[nodiscard]] QVariantList videoTracks() const;
     [[nodiscard]] AudioTrackModel *audioTrackModel() const;
     [[nodiscard]] QVariantList audioTrackLevels() const;
-    [[nodiscard]] bool audioWaveformCapturing() const;
-    [[nodiscard]] int audioWaveformSampleCount() const;
+    [[nodiscard]] bool audioWaveformsAnalyzing() const;
     [[nodiscard]] bool audioMeteringAvailable() const;
     [[nodiscard]] int selectedVideoTrack() const;
     [[nodiscard]] int monitoredAudioTrack() const;
@@ -93,14 +91,20 @@ public:
     Q_INVOKABLE void setAudioTrackGainDb(int trackIndex, double gainDb);
     Q_INVOKABLE void setAudioTrackLevelDb(int trackIndex, double levelDb);
     Q_INVOKABLE void resetAudioTrackLevels();
-    Q_INVOKABLE void setAudioWaveformCapturing(bool capturing);
     Q_INVOKABLE void clearAudioWaveforms();
+    // False until the track's waveform has been decoded from the file.
+    [[nodiscard]] Q_INVOKABLE bool audioTrackWaveformReady(int trackIndex) const;
     Q_INVOKABLE void reportAudioMeteringAvailable();
-    // Waveform history, oldest sample first, in dBFS. Kept here rather than in
-    // the QML delegates so it survives delegate teardown (e.g. when a new file
-    // resets the audio track model).
-    [[nodiscard]] Q_INVOKABLE QVariantList audioTrackWaveform(int trackIndex) const;
-    [[nodiscard]] Q_INVOKABLE QVariantList audioMixWaveform() const;
+    // Peak dBFS over a slice of the timeline, reduced to `buckets` values so
+    // the payload stays at roughly one value per pixel however far the view is
+    // zoomed in. startRatio/endRatio are fractions of the media duration, and
+    // trackIndex < 0 asks for the mix. The waveforms are decoded from the file
+    // at a much finer resolution than any single view needs, so zooming in
+    // reveals real detail rather than stretching an overview.
+    [[nodiscard]] Q_INVOKABLE QVariantList audioWaveformRange(int trackIndex,
+                                                              double startRatio,
+                                                              double endRatio,
+                                                              int buckets) const;
     [[nodiscard]] Q_INVOKABLE double audioTrackLevelDb(int trackIndex) const;
     [[nodiscard]] Q_INVOKABLE double audioMixLevelDb() const;
     Q_INVOKABLE void setMonitoredAudioTrack(int trackIndex);
@@ -135,11 +139,11 @@ signals:
     void toolsChanged();
     void mediaTracksChanged();
     void audioTrackLevelsChanged();
-    void audioWaveformCapturingChanged();
+    void audioWaveformsAnalyzingChanged();
     void audioMeteringAvailableChanged();
-    // Emitted once per capture tick, after every waveform history has grown by
-    // one sample. QML canvases repaint on this instead of binding to a list.
-    void audioWaveformSampled();
+    // Emitted when a waveform finishes decoding or the mix is recomputed. QML
+    // canvases repaint on this instead of binding to a list.
+    void audioWaveformsChanged();
     void audioMonitorChanged();
     void audioAnalysisChanged();
     void updateStateChanged();
@@ -164,8 +168,15 @@ private:
     void finishAudioAnalysis();
     void consumeAudioAnalysisProgressOutput();
     void updateAudioAnalysisProgress(double trackProgress);
-    void sampleAudioWaveforms();
-    void resizeAudioWaveforms();
+    // Waveforms are decoded from the file one track at a time, so seeking can
+    // show the audio at any position instead of only what has already played.
+    void startWaveformAnalysis();
+    void startNextWaveformTrack();
+    void readWaveformSamples();
+    void finishWaveformTrack(int exitCode, QProcess::ExitStatus status);
+    void rebuildMixWaveform();
+    void refreshMixWaveform();
+    void setWaveformsAnalyzing(bool analyzing);
     [[nodiscard]] QList<int> selectedAudioTrackIndices() const;
     [[nodiscard]] QString audioFilterGraph(bool cacheInput) const;
     void probeDuration(int targetSizeMiB,
@@ -229,10 +240,20 @@ private:
     QList<AudioTrackInfo> m_audioTracks;
     AudioTrackModel *m_audioTrackModel = nullptr;
     QList<double> m_audioTrackLevels;
-    QList<QList<double>> m_audioTrackWaveforms;
-    QList<double> m_audioMixWaveform;
-    QTimer m_audioWaveformTimer;
-    bool m_audioWaveformCapturing = false;
+    // Peak dBFS per bucket, float to keep a long file's waveforms compact.
+    QList<QList<float>> m_audioTrackWaveforms;
+    QList<bool> m_audioWaveformReady;
+    QList<float> m_audioMixWaveform;
+    int m_audioWaveformBuckets = 0;
+    QProcess m_waveformProcess;
+    QList<int> m_waveformQueue;
+    int m_waveformTrackIndex = -1;
+    QList<float> m_waveformPeaks;
+    qint64 m_waveformSampleIndex = 0;
+    qint64 m_waveformExpectedSamples = 0;
+    // Holds a trailing odd byte when a read splits a 16-bit sample.
+    QByteArray m_waveformCarry;
+    bool m_audioWaveformsAnalyzing = false;
     bool m_audioMeteringAvailable = false;
     int m_selectedVideoTrack = 0;
     int m_monitoredAudioTrack = -1;

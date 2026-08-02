@@ -41,8 +41,15 @@ constexpr double containerSafetyFactor = 0.97;
 constexpr double minimumAudioGainDb = -30.0;
 constexpr double maximumAudioGainDb = 30.0;
 constexpr double minimumAudioLevelDb = -60.0;
-constexpr int audioWaveformSamples = 240;
-constexpr int audioWaveformIntervalMs = 50;
+// Stored waveform resolution. Far finer than a single view needs, so zooming
+// in uncovers detail instead of magnifying an overview.
+constexpr int audioWaveformBucketMs = 2;
+// Ceiling on the stored buckets. Long files coarsen past this rather than
+// growing without bound; 900k buckets is about 30 minutes at 2 ms.
+constexpr int audioWaveformMaxBuckets = 900000;
+// Decoding rate for waveform analysis. Well above what the picture resolves,
+// but low enough to keep the pipe cheap on long files.
+constexpr int audioWaveformSampleRateHz = 22050;
 
 struct ReleaseVersion {
     QVersionNumber baseVersion;
@@ -148,10 +155,11 @@ AppController::AppController(QObject *parent)
     m_includePrereleaseUpdates = m_prereleaseBuild
         || settings.value(QStringLiteral("updates/includePrereleases"), false).toBool();
 
-    m_audioWaveformTimer.setInterval(audioWaveformIntervalMs);
-    m_audioWaveformTimer.setTimerType(Qt::PreciseTimer);
-    connect(&m_audioWaveformTimer, &QTimer::timeout,
-            this, &AppController::sampleAudioWaveforms);
+    m_waveformProcess.setProcessChannelMode(QProcess::SeparateChannels);
+    connect(&m_waveformProcess, &QProcess::readyReadStandardOutput,
+            this, &AppController::readWaveformSamples);
+    connect(&m_waveformProcess, &QProcess::finished,
+            this, &AppController::finishWaveformTrack);
 
     m_probeProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_trackProbeProcess.setProcessChannelMode(QProcess::SeparateChannels);
@@ -603,6 +611,7 @@ void AppController::setAudioTrackSelected(int trackIndex, bool selected)
         emit audioMonitorChanged();
     }
     m_audioTrackModel->notifyTrackChanged(trackIndex, {AudioTrackModel::SelectedRole});
+    refreshMixWaveform();
 }
 
 void AppController::setAllAudioTracksSelected(bool selected)
@@ -624,6 +633,7 @@ void AppController::setAllAudioTracksSelected(bool selected)
             emit audioMonitorChanged();
         }
         m_audioTrackModel->notifyAllTracksChanged({AudioTrackModel::SelectedRole});
+        refreshMixWaveform();
     }
 }
 
@@ -639,6 +649,7 @@ void AppController::setAudioTrackGainDb(int trackIndex, double gainDb)
     }
     m_audioTracks[trackIndex].gainDb = adjustedGain;
     m_audioTrackModel->notifyTrackChanged(trackIndex, {AudioTrackModel::GainDbRole});
+    refreshMixWaveform();
 }
 
 void AppController::setAudioTrackLevelDb(int trackIndex, double levelDb)
@@ -668,14 +679,9 @@ void AppController::resetAudioTrackLevels()
     }
 }
 
-bool AppController::audioWaveformCapturing() const
+bool AppController::audioWaveformsAnalyzing() const
 {
-    return m_audioWaveformCapturing;
-}
-
-int AppController::audioWaveformSampleCount() const
-{
-    return audioWaveformSamples;
+    return m_audioWaveformsAnalyzing;
 }
 
 bool AppController::audioMeteringAvailable() const
@@ -683,27 +689,204 @@ bool AppController::audioMeteringAvailable() const
     return m_audioMeteringAvailable;
 }
 
-void AppController::setAudioWaveformCapturing(bool capturing)
+void AppController::setWaveformsAnalyzing(bool analyzing)
 {
-    if (m_audioWaveformCapturing == capturing) {
+    if (m_audioWaveformsAnalyzing == analyzing) {
         return;
     }
-    m_audioWaveformCapturing = capturing;
-    if (capturing) {
-        resizeAudioWaveforms();
-        m_audioWaveformTimer.start();
-    } else {
-        m_audioWaveformTimer.stop();
-    }
-    emit audioWaveformCapturingChanged();
+    m_audioWaveformsAnalyzing = analyzing;
+    emit audioWaveformsAnalyzingChanged();
 }
 
 void AppController::clearAudioWaveforms()
 {
-    m_audioTrackWaveforms.clear();
+    // Drop the queue and the current track before killing, so the finished
+    // signal that the kill delivers cannot start the next decode behind us.
+    m_waveformQueue.clear();
+    m_waveformTrackIndex = -1;
+    if (m_waveformProcess.state() != QProcess::NotRunning) {
+        m_waveformProcess.kill();
+        m_waveformProcess.waitForFinished(2000);
+    }
+    m_waveformCarry.clear();
+    m_waveformPeaks.clear();
+
+    // An empty waveform reads as "nothing decoded yet" and draws as silence.
+    m_audioTrackWaveforms.assign(m_audioTracks.size(), QList<float>());
+    m_audioWaveformReady.assign(m_audioTracks.size(), false);
     m_audioMixWaveform.clear();
-    resizeAudioWaveforms();
-    emit audioWaveformSampled();
+    m_audioWaveformBuckets = 0;
+
+    setWaveformsAnalyzing(false);
+    emit audioWaveformsChanged();
+}
+
+bool AppController::audioTrackWaveformReady(int trackIndex) const
+{
+    return m_audioWaveformReady.value(trackIndex, false);
+}
+
+void AppController::startWaveformAnalysis()
+{
+    if (m_ffmpegPath.isEmpty() || !hasSelectedFile() || m_audioTracks.isEmpty()
+        || m_mediaDurationMs <= 0) {
+        return;
+    }
+
+    m_audioWaveformBuckets = static_cast<int>(std::clamp<qint64>(
+        m_mediaDurationMs / audioWaveformBucketMs, 1, audioWaveformMaxBuckets));
+
+    m_waveformQueue.clear();
+    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
+        m_waveformQueue.append(static_cast<int>(index));
+    }
+    setWaveformsAnalyzing(true);
+    startNextWaveformTrack();
+}
+
+void AppController::startNextWaveformTrack()
+{
+    if (m_waveformQueue.isEmpty()) {
+        m_waveformTrackIndex = -1;
+        setWaveformsAnalyzing(false);
+        return;
+    }
+
+    // A kill that has not been reaped yet still owns the process; its finished
+    // handler calls back here, so the queue is picked up then instead.
+    if (m_waveformProcess.state() != QProcess::NotRunning) {
+        return;
+    }
+
+    m_waveformTrackIndex = m_waveformQueue.takeFirst();
+    m_waveformPeaks.fill(0.0f, m_audioWaveformBuckets);
+    m_waveformSampleIndex = 0;
+    m_waveformCarry.clear();
+    m_waveformExpectedSamples = std::max<qint64>(
+        1, m_mediaDurationMs * audioWaveformSampleRateHz / 1000);
+
+    // Decode the one track to raw mono PCM on stdout and reduce it to bucket
+    // peaks as it arrives, so nothing larger than a read buffer is held.
+    m_waveformProcess.start(
+        m_ffmpegPath,
+        {QStringLiteral("-v"), QStringLiteral("error"),
+         QStringLiteral("-nostdin"),
+         QStringLiteral("-i"), m_selectedFilePath,
+         QStringLiteral("-map"), QStringLiteral("0:a:%1").arg(m_waveformTrackIndex),
+         QStringLiteral("-ac"), QStringLiteral("1"),
+         QStringLiteral("-ar"), QString::number(audioWaveformSampleRateHz),
+         QStringLiteral("-f"), QStringLiteral("s16le"),
+         QStringLiteral("-")});
+}
+
+void AppController::readWaveformSamples()
+{
+    const QByteArray chunk = m_waveformCarry + m_waveformProcess.readAllStandardOutput();
+    if (m_waveformTrackIndex < 0) {
+        m_waveformCarry.clear();
+        return;
+    }
+
+    const qsizetype usable = chunk.size() - (chunk.size() % 2);
+    for (qsizetype offset = 0; offset < usable; offset += 2) {
+        // Signed 16-bit little endian, decoded by hand to stay independent of
+        // the buffer's alignment and the host byte order.
+        const int low = static_cast<quint8>(chunk.at(offset));
+        const int high = static_cast<qint8>(chunk.at(offset + 1));
+        const float amplitude = std::abs((high << 8) | low) / 32768.0f;
+
+        const qint64 bucket = std::clamp<qint64>(
+            m_waveformSampleIndex * m_audioWaveformBuckets / m_waveformExpectedSamples,
+            0, m_audioWaveformBuckets - 1);
+        if (amplitude > m_waveformPeaks.at(bucket)) {
+            m_waveformPeaks[bucket] = amplitude;
+        }
+        ++m_waveformSampleIndex;
+    }
+    m_waveformCarry = chunk.mid(usable);
+}
+
+void AppController::finishWaveformTrack(int exitCode, QProcess::ExitStatus status)
+{
+    const int trackIndex = m_waveformTrackIndex;
+    m_waveformTrackIndex = -1;
+
+    const bool succeeded = status == QProcess::NormalExit && exitCode == 0
+        && trackIndex >= 0 && trackIndex < m_audioTrackWaveforms.size();
+    if (succeeded) {
+        QList<float> levels;
+        levels.reserve(m_waveformPeaks.size());
+        for (const float peak : std::as_const(m_waveformPeaks)) {
+            levels.append(peak > 0.0f
+                              ? std::clamp(20.0f * std::log10(peak),
+                                           static_cast<float>(minimumAudioLevelDb), 0.0f)
+                              : static_cast<float>(minimumAudioLevelDb));
+        }
+        m_audioTrackWaveforms[trackIndex] = levels;
+        m_audioWaveformReady[trackIndex] = true;
+        rebuildMixWaveform();
+        emit audioWaveformsChanged();
+    }
+
+    m_waveformPeaks.clear();
+    m_waveformCarry.clear();
+    startNextWaveformTrack();
+}
+
+void AppController::rebuildMixWaveform()
+{
+    // Peaks add in the amplitude domain, which is the worst case the encoder's
+    // limiter would have to absorb, so the mix strip matches what it warns about.
+    if (m_audioWaveformBuckets <= 0) {
+        m_audioMixWaveform.clear();
+        return;
+    }
+
+    QList<double> amplitudes(m_audioWaveformBuckets, 0.0);
+    bool anyContribution = false;
+
+    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
+        const bool contributes = m_monitoredAudioTrack >= 0
+            ? m_monitoredAudioTrack == index
+            : m_audioTracks.at(index).selected;
+        if (!contributes || !m_audioWaveformReady.value(index, false)) {
+            continue;
+        }
+
+        const QList<float> &levels = m_audioTrackWaveforms.at(index);
+        if (levels.size() != m_audioWaveformBuckets) {
+            continue;
+        }
+
+        const double gain = std::pow(10.0, m_audioTracks.at(index).gainDb / 20.0);
+        for (qsizetype bucket = 0; bucket < m_audioWaveformBuckets; ++bucket) {
+            const double levelDb = levels.at(bucket);
+            if (levelDb > minimumAudioLevelDb) {
+                amplitudes[bucket] += std::pow(10.0, levelDb / 20.0) * gain;
+            }
+        }
+        anyContribution = true;
+    }
+
+    if (!anyContribution) {
+        m_audioMixWaveform.clear();
+        return;
+    }
+
+    m_audioMixWaveform.resize(m_audioWaveformBuckets);
+    for (qsizetype bucket = 0; bucket < m_audioWaveformBuckets; ++bucket) {
+        const double amplitude = amplitudes.at(bucket);
+        m_audioMixWaveform[bucket] = static_cast<float>(
+            amplitude > 0.0
+                ? std::clamp(20.0 * std::log10(amplitude), minimumAudioLevelDb, 0.0)
+                : minimumAudioLevelDb);
+    }
+}
+
+void AppController::refreshMixWaveform()
+{
+    rebuildMixWaveform();
+    emit audioWaveformsChanged();
 }
 
 void AppController::reportAudioMeteringAvailable()
@@ -715,26 +898,47 @@ void AppController::reportAudioMeteringAvailable()
     emit audioMeteringAvailableChanged();
 }
 
-QVariantList AppController::audioTrackWaveform(int trackIndex) const
+QVariantList AppController::audioWaveformRange(int trackIndex,
+                                               double startRatio,
+                                               double endRatio,
+                                               int buckets) const
 {
     QVariantList result;
-    if (trackIndex < 0 || trackIndex >= m_audioTrackWaveforms.size()) {
+    const QList<float> &source = trackIndex < 0
+        ? m_audioMixWaveform
+        : m_audioTrackWaveforms.value(trackIndex);
+    if (source.isEmpty() || buckets <= 0 || !std::isfinite(startRatio)
+        || !std::isfinite(endRatio)) {
         return result;
     }
-    const QList<double> &history = m_audioTrackWaveforms.at(trackIndex);
-    result.reserve(history.size());
-    for (const double levelDb : history) {
-        result.append(levelDb);
-    }
-    return result;
-}
 
-QVariantList AppController::audioMixWaveform() const
-{
-    QVariantList result;
-    result.reserve(m_audioMixWaveform.size());
-    for (const double levelDb : m_audioMixWaveform) {
-        result.append(levelDb);
+    const double from = std::clamp(startRatio, 0.0, 1.0);
+    const double to = std::clamp(endRatio, 0.0, 1.0);
+    if (to <= from) {
+        return result;
+    }
+
+    const double first = from * source.size();
+    const double span = (to - from) * source.size();
+    result.reserve(buckets);
+    for (int index = 0; index < buckets; ++index) {
+        // Reduce by peak, not by average: a quiet average would hide the
+        // transients the picture exists to show once the view is zoomed out.
+        const qsizetype begin = std::clamp<qsizetype>(
+            static_cast<qsizetype>(first + span * index / buckets),
+            0, source.size() - 1);
+        qsizetype end = std::clamp<qsizetype>(
+            static_cast<qsizetype>(first + span * (index + 1) / buckets),
+            0, source.size());
+        if (end <= begin) {
+            end = begin + 1;
+        }
+
+        float peak = static_cast<float>(minimumAudioLevelDb);
+        for (qsizetype position = begin; position < end; ++position) {
+            peak = std::max(peak, source.at(position));
+        }
+        result.append(static_cast<double>(peak));
     }
     return result;
 }
@@ -748,53 +952,22 @@ double AppController::audioTrackLevelDb(int trackIndex) const
 
 double AppController::audioMixLevelDb() const
 {
-    return m_audioMixWaveform.isEmpty() ? minimumAudioLevelDb : m_audioMixWaveform.constLast();
-}
-
-void AppController::resizeAudioWaveforms()
-{
-    if (m_audioTrackWaveforms.size() != m_audioTracks.size()) {
-        m_audioTrackWaveforms.resize(m_audioTracks.size());
-    }
-    for (QList<double> &history : m_audioTrackWaveforms) {
-        if (history.size() != audioWaveformSamples) {
-            history.fill(minimumAudioLevelDb, audioWaveformSamples);
-        }
-    }
-    if (m_audioMixWaveform.size() != audioWaveformSamples) {
-        m_audioMixWaveform.fill(minimumAudioLevelDb, audioWaveformSamples);
-    }
-}
-
-void AppController::sampleAudioWaveforms()
-{
-    resizeAudioWaveforms();
-
-    // The monitored mix is the sum of the powers of the contributing tracks:
-    // levelDb is 10*log10(meanSquare), so 10^(levelDb/10) is back in the power
-    // domain and uncorrelated tracks add there (two equal tracks give +3 dB).
+    // The live readout has to come from the meters, not from the file-based
+    // waveform, whose last bucket is the end of the track rather than "now".
+    // Uncorrelated tracks add in the power domain: two equal ones give +3 dB.
     double mixPower = 0.0;
     for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
-        const double levelDb = m_audioTrackLevels.value(index, minimumAudioLevelDb);
-        QList<double> &history = m_audioTrackWaveforms[index];
-        history.append(levelDb);
-        history.removeFirst();
-
         const bool contributes = m_monitoredAudioTrack >= 0
             ? m_monitoredAudioTrack == index
             : m_audioTracks.at(index).selected;
+        const double levelDb = m_audioTrackLevels.value(index, minimumAudioLevelDb);
         if (contributes && levelDb > minimumAudioLevelDb) {
             mixPower += std::pow(10.0, levelDb / 10.0);
         }
     }
-
-    const double mixDb = mixPower > 0.0
+    return mixPower > 0.0
         ? std::clamp(10.0 * std::log10(mixPower), minimumAudioLevelDb, 0.0)
         : minimumAudioLevelDb;
-    m_audioMixWaveform.append(mixDb);
-    m_audioMixWaveform.removeFirst();
-
-    emit audioWaveformSampled();
 }
 
 void AppController::setMonitoredAudioTrack(int trackIndex)
@@ -806,7 +979,8 @@ void AppController::setMonitoredAudioTrack(int trackIndex)
     }
     m_monitoredAudioTrack = trackIndex;
     resetAudioTrackLevels();
-    clearAudioWaveforms();
+    // The decoded waveforms stay valid; only which tracks feed the mix changed.
+    refreshMixWaveform();
     emit audioMonitorChanged();
 }
 
@@ -1320,6 +1494,9 @@ void AppController::parseMediaTracks(const QByteArray &json)
     }
     m_audioTrackLevels.fill(minimumAudioLevelDb, m_audioTracks.size());
     clearAudioWaveforms();
+    // Both the track list and the duration are known here, which is everything
+    // the waveform decode needs to map samples onto the timeline.
+    startWaveformAnalysis();
     emit audioTrackLevelsChanged();
 }
 

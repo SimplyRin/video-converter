@@ -304,16 +304,6 @@ ApplicationWindow {
         onTriggered: trimWindow.synchronizeAudioPreviews(false)
     }
 
-    // The waveform history lives in the backend so it survives delegate
-    // teardown when a new file resets the audio track model.
-    Binding {
-        target: backend
-        property: "audioWaveformCapturing"
-        value: trimWindow.visible
-               && player.playbackState === MediaPlayer.PlayingState
-        restoreMode: Binding.RestoreNone
-    }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 12
@@ -587,6 +577,12 @@ ApplicationWindow {
     AudioMixerWindow {
         id: audioMixerWindow
         previewPlaying: player.playbackState === MediaPlayer.PlayingState
+        // Drives the playhead over the file-based waveforms, so seeking here
+        // moves the marker in the mixer.
+        mediaPosition: player.position
+        mediaDuration: player.duration
+        trimStart: trimWindow.startPosition
+        trimEnd: trimWindow.endPosition
         onXChanged: trimWindow.undockMixerIfUserMoved()
         onYChanged: trimWindow.undockMixerIfUserMoved()
     }
