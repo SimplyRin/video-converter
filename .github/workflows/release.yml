@@ -5,6 +5,17 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      build_windows:
+        description: "Windows x64 をビルドする"
+        required: true
+        type: boolean
+        default: true
+      build_macos:
+        description: "macOS arm64 をビルドする"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,6 +33,16 @@ jobs:
       release_tag: ${{ steps.metadata.outputs.release_tag }}
       is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}
     steps:
+      - name: Validate manual build targets
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.build_windows != true &&
+          inputs.build_macos != true
+        shell: bash
+        run: |
+          echo "Select at least one build target: Windows x64 or macOS arm64." >&2
+          exit 1
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -82,6 +103,7 @@ jobs:
   windows:
     name: Windows x64
     needs: metadata
+    if: github.event_name != 'workflow_dispatch' || inputs.build_windows
     runs-on: windows-latest
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
@@ -152,6 +174,7 @@ jobs:
   macos:
     name: macOS arm64
     needs: metadata
+    if: github.event_name != 'workflow_dispatch' || inputs.build_macos
     runs-on: macos-14
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
@@ -244,7 +267,12 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [metadata, windows, macos]
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    if: >-
+      always() &&
+      needs.metadata.result == 'success' &&
+      (needs.windows.result == 'success' || needs.windows.result == 'skipped') &&
+      (needs.macos.result == 'success' || needs.macos.result == 'skipped') &&
+      (needs.windows.result == 'success' || needs.macos.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -253,6 +281,8 @@ jobs:
       VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
       IS_PRERELEASE: ${{ needs.metadata.outputs.is_prerelease }}
+      HAS_WINDOWS_ASSET: ${{ needs.windows.result == 'success' }}
+      HAS_MACOS_ASSET: ${{ needs.macos.result == 'success' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -263,9 +293,13 @@ jobs:
       - name: Verify release assets
         shell: bash
         run: |
-          test -f "release-assets/Windows-x64_v${VERSION}.zip"
-          test -f "release-assets/Windows-x64-Setup_v${VERSION}.exe"
-          test -f "release-assets/macOS-arm64_v${VERSION}.zip"
+          if [[ "${HAS_WINDOWS_ASSET}" == "true" ]]; then
+            test -f "release-assets/Windows-x64_v${VERSION}.zip"
+            test -f "release-assets/Windows-x64-Setup_v${VERSION}.exe"
+          fi
+          if [[ "${HAS_MACOS_ASSET}" == "true" ]]; then
+            test -f "release-assets/macOS-arm64_v${VERSION}.zip"
+          fi
 
       - name: Create GitHub Release
         shell: bash
@@ -275,9 +309,13 @@ jobs:
           {
             echo "DiscordVideo v${VERSION}"
             echo
-            echo "- Windows x64 portable ZIP (Qt runtime and BtbN GPL FFmpeg included)"
-            echo "- Windows x64 installer"
-            echo "- macOS arm64 (Qt runtime and GPL FFmpeg included)"
+            if [[ "${HAS_WINDOWS_ASSET}" == "true" ]]; then
+              echo "- Windows x64 portable ZIP (Qt runtime and BtbN GPL FFmpeg included)"
+              echo "- Windows x64 installer"
+            fi
+            if [[ "${HAS_MACOS_ASSET}" == "true" ]]; then
+              echo "- macOS arm64 (Qt runtime and GPL FFmpeg included)"
+            fi
           } > "${notes_file}"
 
           if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
