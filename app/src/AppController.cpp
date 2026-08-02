@@ -39,6 +39,8 @@ constexpr double containerSafetyFactor = 0.97;
 constexpr double minimumAudioGainDb = -30.0;
 constexpr double maximumAudioGainDb = 30.0;
 constexpr double minimumAudioLevelDb = -60.0;
+constexpr int audioWaveformSamples = 240;
+constexpr int audioWaveformIntervalMs = 50;
 
 struct ReleaseVersion {
     QVersionNumber baseVersion;
@@ -143,6 +145,11 @@ AppController::AppController(QObject *parent)
     m_includePrereleaseUpdates = m_prereleaseBuild
         || settings.value(QStringLiteral("updates/includePrereleases"), false).toBool();
 
+    m_audioWaveformTimer.setInterval(audioWaveformIntervalMs);
+    m_audioWaveformTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_audioWaveformTimer, &QTimer::timeout,
+            this, &AppController::sampleAudioWaveforms);
+
     m_probeProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_trackProbeProcess.setProcessChannelMode(QProcess::SeparateChannels);
     m_audioAnalysisProcess.setProcessChannelMode(QProcess::SeparateChannels);
@@ -240,6 +247,7 @@ AppController::AppController(QObject *parent)
                     m_selectedVideoTrack = 0;
                     m_monitoredAudioTrack = -1;
                     m_mediaDurationMs = 0;
+                    clearAudioWaveforms();
                     emit audioTrackLevelsChanged();
                     emit audioMonitorChanged();
                 }
@@ -525,6 +533,11 @@ void AppController::selectFile(const QUrl &url)
     m_mediaDurationMs = 0;
     m_audioAnalysisTrackProgress = 0.0;
     m_audioAnalysisStatus.clear();
+    clearAudioWaveforms();
+    if (m_audioMeteringAvailable) {
+        m_audioMeteringAvailable = false;
+        emit audioMeteringAvailableChanged();
+    }
     emit selectedFileChanged();
     emit mediaTracksChanged();
     emit audioTrackLevelsChanged();
@@ -574,6 +587,11 @@ void AppController::clearSelectedFile()
     m_audioAnalysisTrackProgress = 0.0;
     m_tracksLoading = false;
     m_audioAnalysisStatus.clear();
+    clearAudioWaveforms();
+    if (m_audioMeteringAvailable) {
+        m_audioMeteringAvailable = false;
+        emit audioMeteringAvailableChanged();
+    }
     emit selectedFileChanged();
     emit mediaTracksChanged();
     emit audioTrackLevelsChanged();
@@ -677,6 +695,135 @@ void AppController::resetAudioTrackLevels()
     }
 }
 
+bool AppController::audioWaveformCapturing() const
+{
+    return m_audioWaveformCapturing;
+}
+
+int AppController::audioWaveformSampleCount() const
+{
+    return audioWaveformSamples;
+}
+
+bool AppController::audioMeteringAvailable() const
+{
+    return m_audioMeteringAvailable;
+}
+
+void AppController::setAudioWaveformCapturing(bool capturing)
+{
+    if (m_audioWaveformCapturing == capturing) {
+        return;
+    }
+    m_audioWaveformCapturing = capturing;
+    if (capturing) {
+        resizeAudioWaveforms();
+        m_audioWaveformTimer.start();
+    } else {
+        m_audioWaveformTimer.stop();
+    }
+    emit audioWaveformCapturingChanged();
+}
+
+void AppController::clearAudioWaveforms()
+{
+    m_audioTrackWaveforms.clear();
+    m_audioMixWaveform.clear();
+    resizeAudioWaveforms();
+    emit audioWaveformSampled();
+}
+
+void AppController::reportAudioMeteringAvailable()
+{
+    if (m_audioMeteringAvailable) {
+        return;
+    }
+    m_audioMeteringAvailable = true;
+    emit audioMeteringAvailableChanged();
+}
+
+QVariantList AppController::audioTrackWaveform(int trackIndex) const
+{
+    QVariantList result;
+    if (trackIndex < 0 || trackIndex >= m_audioTrackWaveforms.size()) {
+        return result;
+    }
+    const QList<double> &history = m_audioTrackWaveforms.at(trackIndex);
+    result.reserve(history.size());
+    for (const double levelDb : history) {
+        result.append(levelDb);
+    }
+    return result;
+}
+
+QVariantList AppController::audioMixWaveform() const
+{
+    QVariantList result;
+    result.reserve(m_audioMixWaveform.size());
+    for (const double levelDb : m_audioMixWaveform) {
+        result.append(levelDb);
+    }
+    return result;
+}
+
+double AppController::audioTrackLevelDb(int trackIndex) const
+{
+    return trackIndex >= 0 && trackIndex < m_audioTrackLevels.size()
+        ? m_audioTrackLevels.at(trackIndex)
+        : minimumAudioLevelDb;
+}
+
+double AppController::audioMixLevelDb() const
+{
+    return m_audioMixWaveform.isEmpty() ? minimumAudioLevelDb : m_audioMixWaveform.constLast();
+}
+
+void AppController::resizeAudioWaveforms()
+{
+    if (m_audioTrackWaveforms.size() != m_audioTracks.size()) {
+        m_audioTrackWaveforms.resize(m_audioTracks.size());
+    }
+    for (QList<double> &history : m_audioTrackWaveforms) {
+        if (history.size() != audioWaveformSamples) {
+            history.fill(minimumAudioLevelDb, audioWaveformSamples);
+        }
+    }
+    if (m_audioMixWaveform.size() != audioWaveformSamples) {
+        m_audioMixWaveform.fill(minimumAudioLevelDb, audioWaveformSamples);
+    }
+}
+
+void AppController::sampleAudioWaveforms()
+{
+    resizeAudioWaveforms();
+
+    // The monitored mix is the sum of the powers of the contributing tracks:
+    // levelDb is 10*log10(meanSquare), so 10^(levelDb/10) is back in the power
+    // domain and uncorrelated tracks add there (two equal tracks give +3 dB).
+    double mixPower = 0.0;
+    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
+        const double levelDb = m_audioTrackLevels.value(index, minimumAudioLevelDb);
+        QList<double> &history = m_audioTrackWaveforms[index];
+        history.append(levelDb);
+        history.removeFirst();
+
+        const bool contributes = m_monitoredAudioTrack >= 0
+            ? m_monitoredAudioTrack == index
+            : m_audioTracks.at(index).selected;
+        if (contributes && levelDb > minimumAudioLevelDb) {
+            mixPower += std::pow(10.0, levelDb / 10.0);
+        }
+    }
+
+    const double mixDb = mixPower > 0.0
+        ? std::clamp(10.0 * std::log10(mixPower), minimumAudioLevelDb, 0.0)
+        : minimumAudioLevelDb;
+    m_audioMixWaveform.append(mixDb);
+    m_audioMixWaveform.removeFirst();
+
+    emit audioWaveformSampled();
+}
+
 void AppController::setMonitoredAudioTrack(int trackIndex)
 {
     if (trackIndex < -1 || trackIndex >= m_audioTracks.size()
@@ -686,6 +833,7 @@ void AppController::setMonitoredAudioTrack(int trackIndex)
     }
     m_monitoredAudioTrack = trackIndex;
     resetAudioTrackLevels();
+    clearAudioWaveforms();
     emit audioMonitorChanged();
 }
 
@@ -1124,6 +1272,7 @@ void AppController::parseMediaTracks(const QByteArray &json)
         }
     }
     m_audioTrackLevels.fill(minimumAudioLevelDb, m_audioTracks.size());
+    clearAudioWaveforms();
     emit audioTrackLevelsChanged();
 }
 

@@ -176,6 +176,12 @@ ApplicationWindow {
                 gainDb: Number(audioPreview.modelData.gainDb)
                 onLevelDbChanged: backend.setAudioTrackLevelDb(
                                       audioPreview.modelData.index, levelDb)
+                // Tell the backend once any media backend actually delivers
+                // audio buffers, so the mixer can explain a flat waveform.
+                onReceivingBuffersChanged: {
+                    if (receivingBuffers)
+                        backend.reportAudioMeteringAvailable()
+                }
             }
 
             MediaPlayer {
@@ -223,6 +229,16 @@ ApplicationWindow {
         running: trimWindow.visible
                  && player.playbackState === MediaPlayer.PlayingState
         onTriggered: trimWindow.synchronizeAudioPreviews(false)
+    }
+
+    // The waveform history lives in the backend so it survives the delegate
+    // teardown that mediaTracksChanged() causes in the mixer and here.
+    Binding {
+        target: backend
+        property: "audioWaveformCapturing"
+        value: trimWindow.visible
+               && player.playbackState === MediaPlayer.PlayingState
+        restoreMode: Binding.RestoreNone
     }
 
     ColumnLayout {

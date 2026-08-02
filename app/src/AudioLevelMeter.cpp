@@ -40,6 +40,11 @@ void AudioLevelMeter::setGainDb(double gainDb)
     emit gainDbChanged();
 }
 
+bool AudioLevelMeter::receivingBuffers() const
+{
+    return m_receivingBuffers;
+}
+
 void AudioLevelMeter::reset()
 {
     if (qFuzzyCompare(m_levelDb, minimumLevelDb)) {
@@ -51,6 +56,11 @@ void AudioLevelMeter::reset()
 
 void AudioLevelMeter::processBuffer(const QAudioBuffer &buffer)
 {
+    if (!m_receivingBuffers) {
+        m_receivingBuffers = true;
+        emit receivingBuffersChanged();
+    }
+
     if (!buffer.isValid() || buffer.sampleCount() <= 0) {
         reset();
         return;

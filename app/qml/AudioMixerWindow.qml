@@ -16,7 +16,11 @@ ApplicationWindow {
     title: "音量ミキサー"
     color: palette.window
     property bool previewPlaying: false
-    property var waveformLevels: []
+
+    onPreviewPlayingChanged: {
+        if (!previewPlaying)
+            meteringGracePeriod.elapsed = false
+    }
 
     function openMixer() {
         show()
@@ -34,59 +38,133 @@ ApplicationWindow {
         return count
     }
 
-    function liveLevelDb(trackIndex) {
-        const levels = backend.audioTrackLevels
-        return trackIndex >= 0 && trackIndex < levels.length
-               ? Number(levels[trackIndex]) : -60
-    }
-
     function isTrackPreviewed(trackIndex, selected) {
         return backend.monitoredAudioTrack >= 0
                ? backend.monitoredAudioTrack === trackIndex : selected
     }
 
-    function monitoredLevelDb() {
-        if (backend.monitoredAudioTrack >= 0)
-            return liveLevelDb(backend.monitoredAudioTrack)
+    // One waveform strip per source. trackIndex -1 renders the monitored mix.
+    // Sample history is owned by the backend, so a strip keeps its picture even
+    // when mediaTracksChanged() recreates the delegate it lives in.
+    component WaveformStrip: Rectangle {
+        id: strip
 
-        const tracks = backend.audioTracks
-        let amplitude = 0
-        for (let index = 0; index < tracks.length; ++index) {
-            if (tracks[index].selected)
-                amplitude += Math.pow(10, liveLevelDb(index) / 20)
+        property int trackIndex: -1
+        property bool active: false
+        property string caption: ""
+        property color accentColor: "#ec64a5"
+        property real currentLevelDb: -60
+
+        function samples() {
+            return strip.trackIndex < 0
+                   ? backend.audioMixWaveform()
+                   : backend.audioTrackWaveform(strip.trackIndex)
         }
-        return amplitude > 0 ? Math.min(0, 20 * Math.log10(amplitude)) : -60
-    }
 
-    function appendWaveformLevel() {
-        const history = waveformLevels.slice()
-        history.push(monitoredLevelDb())
-        if (history.length > 320)
-            history.splice(0, history.length - 320)
-        waveformLevels = history
-        waveformCanvas.requestPaint()
-    }
+        function readLevelDb() {
+            return strip.trackIndex < 0
+                   ? backend.audioMixLevelDb()
+                   : backend.audioTrackLevelDb(strip.trackIndex)
+        }
 
-    function clearWaveform() {
-        waveformLevels = []
-        waveformCanvas.requestPaint()
-    }
+        color: "#17131b"
+        radius: 3
+        clip: true
+        border.color: strip.active ? strip.accentColor : "#3b3641"
 
-    onPreviewPlayingChanged: {
-        if (!previewPlaying)
-            clearWaveform()
-    }
+        onActiveChanged: {
+            if (!active)
+                currentLevelDb = -60
+            waveCanvas.requestPaint()
+        }
 
-    Connections {
-        target: backend
-        function onAudioMonitorChanged() { mixerWindow.clearWaveform() }
-    }
+        Connections {
+            target: backend
+            function onAudioWaveformSampled() {
+                strip.currentLevelDb = strip.active ? strip.readLevelDb() : -60
+                waveCanvas.requestPaint()
+            }
+        }
 
-    Timer {
-        interval: 50
-        repeat: true
-        running: mixerWindow.visible && mixerWindow.previewPlaying
-        onTriggered: mixerWindow.appendWaveformLevel()
+        Label {
+            id: captionLabel
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.margins: 5
+            z: 2
+            visible: strip.caption.length > 0
+            text: strip.caption
+            color: "white"
+            font.pixelSize: 11
+            opacity: strip.active ? 1 : 0.55
+        }
+
+        Label {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: 5
+            anchors.rightMargin: 8
+            z: 2
+            text: strip.active
+                  ? Number(strip.currentLevelDb).toFixed(1) + " dBFS"
+                  : "-- dBFS"
+            color: "white"
+            font.family: "monospace"
+            font.pixelSize: 11
+            opacity: strip.active ? 1 : 0.55
+        }
+
+        Canvas {
+            id: waveCanvas
+            anchors.fill: parent
+            anchors.topMargin: captionLabel.visible ? 20 : 4
+            anchors.bottomMargin: 4
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            onPaint: {
+                const context = getContext("2d")
+                context.reset()
+                context.clearRect(0, 0, width, height)
+
+                const center = height / 2
+                context.strokeStyle = "#554b58"
+                context.lineWidth = 1
+                context.beginPath()
+                context.moveTo(0, center)
+                context.lineTo(width, center)
+                context.stroke()
+
+                const values = strip.samples()
+                if (values.length < 2)
+                    return
+
+                function offsetAt(index) {
+                    const normalized = Math.max(0, Math.min(1,
+                                                (Number(values[index]) + 60) / 60))
+                    return normalized * (center - 1)
+                }
+
+                const step = width / (values.length - 1)
+                context.beginPath()
+                context.moveTo(0, center - offsetAt(0))
+                for (let index = 1; index < values.length; ++index)
+                    context.lineTo(index * step, center - offsetAt(index))
+                for (let index = values.length - 1; index >= 0; --index)
+                    context.lineTo(index * step, center + offsetAt(index))
+                context.closePath()
+
+                context.fillStyle = Qt.rgba(strip.accentColor.r, strip.accentColor.g,
+                                            strip.accentColor.b,
+                                            strip.active ? 0.28 : 0.12)
+                context.fill()
+                context.strokeStyle = strip.active ? "#ffffff" : "#7d7486"
+                context.lineWidth = 1.5
+                context.stroke()
+            }
+        }
     }
 
     ColumnLayout {
@@ -125,86 +203,36 @@ ApplicationWindow {
             }
         }
 
-        Rectangle {
+        WaveformStrip {
             Layout.fillWidth: true
             Layout.preferredHeight: 92
-            color: "#17131b"
-            border.color: backend.monitoredAudioTrack >= 0 ? "#ec64a5" : "#66606a"
-            radius: 4
-            clip: true
+            trackIndex: -1
+            active: mixerWindow.previewPlaying
+            accentColor: "#ec64a5"
+            caption: backend.monitoredAudioTrack >= 0
+                     ? "音声トラック " + backend.monitoredAudioTrack + " をモニター中"
+                     : "選択トラックのミックス (" + mixerWindow.selectedAudioCount() + " トラック)"
+        }
 
-            Label {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.margins: 7
-                z: 2
-                text: backend.monitoredAudioTrack >= 0
-                      ? "音声トラック " + backend.monitoredAudioTrack + " をモニター中"
-                      : "選択トラックのミックスをモニター中"
-                color: "white"
-                font.pixelSize: 11
-            }
+        Label {
+            Layout.fillWidth: true
+            visible: mixerWindow.previewPlaying && !backend.audioMeteringAvailable
+                     && meteringGracePeriod.elapsed
+            text: "このQtメディアバックエンドは音声バッファを提供しないため、波形とレベル表示は動作しません"
+                  + "（FFmpegバックエンドが必要です）。スピーカーへのモニター出力は影響を受けません。"
+            wrapMode: Text.WordWrap
+            font.pixelSize: 11
+            color: "#ffb300"
+        }
 
-            Label {
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 7
-                z: 2
-                text: mixerWindow.previewPlaying
-                      ? Number(mixerWindow.monitoredLevelDb()).toFixed(1) + " dBFS"
-                      : "-- dBFS"
-                color: "white"
-                font.family: "monospace"
-            }
-
-            Canvas {
-                id: waveformCanvas
-                anchors.fill: parent
-                anchors.topMargin: 20
-
-                onWidthChanged: requestPaint()
-                onHeightChanged: requestPaint()
-                onPaint: {
-                    const context = getContext("2d")
-                    context.reset()
-                    context.clearRect(0, 0, width, height)
-
-                    const center = height / 2
-                    context.strokeStyle = "#554b58"
-                    context.lineWidth = 1
-                    context.beginPath()
-                    context.moveTo(0, center)
-                    context.lineTo(width, center)
-                    context.stroke()
-
-                    const values = mixerWindow.waveformLevels
-                    if (values.length < 2)
-                        return
-
-                    const step = width / Math.max(1, values.length - 1)
-                    context.beginPath()
-                    for (let index = 0; index < values.length; ++index) {
-                        const normalized = Math.max(0, Math.min(1,
-                                                   (Number(values[index]) + 60) / 60))
-                        const y = center - normalized * (center - 4)
-                        if (index === 0)
-                            context.moveTo(0, y)
-                        else
-                            context.lineTo(index * step, y)
-                    }
-                    for (let index = values.length - 1; index >= 0; --index) {
-                        const normalized = Math.max(0, Math.min(1,
-                                                   (Number(values[index]) + 60) / 60))
-                        context.lineTo(index * step, center + normalized * (center - 4))
-                    }
-                    context.closePath()
-                    context.fillStyle = "rgba(236, 100, 165, 0.22)"
-                    context.fill()
-                    context.strokeStyle = "#ffffff"
-                    context.lineWidth = 1.5
-                    context.stroke()
-                }
-            }
+        Timer {
+            id: meteringGracePeriod
+            interval: 2500
+            // Give playback a moment to start before blaming the backend.
+            property bool elapsed: false
+            running: mixerWindow.previewPlaying && !backend.audioMeteringAvailable
+                     && !elapsed
+            onTriggered: elapsed = true
         }
 
         Rectangle {
@@ -223,158 +251,154 @@ ApplicationWindow {
                 model: backend.audioTracks
 
                 delegate: Rectangle {
+                    id: trackRow
                     required property var modelData
                     required property int index
+                    property bool previewed: mixerWindow.isTrackPreviewed(modelData.index,
+                                                                          modelData.selected)
                     width: trackList.width
-                    height: 104
+                    height: 132
                     color: index % 2 === 0 ? mixerWindow.palette.alternateBase
                                            : mixerWindow.palette.base
 
-                    RowLayout {
+                    ColumnLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 10
                         anchors.rightMargin: 10
-                        spacing: 10
+                        anchors.topMargin: 6
+                        anchors.bottomMargin: 6
+                        spacing: 6
 
-                        CheckBox {
-                            id: enabledCheck
-                            checked: modelData.selected
-                            enabled: !backend.busy && !backend.analyzingAudio
-                            onToggled: backend.setAudioTrackSelected(modelData.index, checked)
-                            Accessible.name: modelData.label + " を出力に含める"
-                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
 
-                        ColumnLayout {
-                            Layout.preferredWidth: 210
-                            Layout.maximumWidth: 210
-                            spacing: 3
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: modelData.label
-                                elide: Text.ElideRight
-                                font.bold: true
+                            CheckBox {
+                                id: enabledCheck
+                                checked: trackRow.modelData.selected
+                                enabled: !backend.busy && !backend.analyzingAudio
+                                onToggled: backend.setAudioTrackSelected(
+                                               trackRow.modelData.index, checked)
+                                Accessible.name: trackRow.modelData.label + " を出力に含める"
                             }
 
-                            Label {
-                                Layout.fillWidth: true
-                                text: modelData.hasMeasurement
-                                      ? "測定平均: " + Number(modelData.meanVolumeDb).toFixed(1)
-                                        + " dBFS / 補正後: "
-                                        + Number(modelData.meanVolumeDb + gainSlider.value).toFixed(1) + " dBFS"
-                                      : "平均音量: 未測定"
-                                font.pixelSize: 11
-                                opacity: 0.75
-                            }
+                            ColumnLayout {
+                                Layout.preferredWidth: 240
+                                Layout.maximumWidth: 240
+                                spacing: 2
 
-                            Label {
-                                Layout.fillWidth: true
-                                visible: modelData.hasRecommendation
-                                text: "おすすめゲイン: "
-                                      + (modelData.recommendedGainDb >= 0 ? "+" : "")
-                                      + Number(modelData.recommendedGainDb).toFixed(1) + " dB"
-                                color: mixerWindow.palette.highlight
-                                font.pixelSize: 11
-                                font.bold: true
-                            }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: trackRow.modelData.label
+                                    elide: Text.ElideRight
+                                    font.bold: true
+                                }
 
-                            Label {
-                                Layout.fillWidth: true
-                                text: mixerWindow.previewPlaying
-                                      && mixerWindow.isTrackPreviewed(modelData.index,
-                                                                      modelData.selected)
-                                      ? "再生レベル: "
-                                        + Number(mixerWindow.liveLevelDb(modelData.index)).toFixed(1)
-                                        + " dBFS"
-                                      : "再生レベル: -- dBFS"
-                                font.pixelSize: 11
-                                font.bold: mixerWindow.previewPlaying
-                                           && mixerWindow.isTrackPreviewed(modelData.index,
-                                                                           modelData.selected)
-                            }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: trackRow.modelData.hasMeasurement
+                                          ? "測定平均: "
+                                            + Number(trackRow.modelData.meanVolumeDb).toFixed(1)
+                                            + " dBFS / 補正後: "
+                                            + Number(trackRow.modelData.meanVolumeDb
+                                                     + gainSlider.value).toFixed(1) + " dBFS"
+                                          : "平均音量: 未測定"
+                                    font.pixelSize: 11
+                                    opacity: 0.75
+                                }
 
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 8
-                                color: "#252525"
-                                radius: 2
-
-                                Rectangle {
-                                    width: parent.width * Math.max(0, Math.min(1,
-                                           ((mixerWindow.previewPlaying
-                                             && mixerWindow.isTrackPreviewed(modelData.index,
-                                                                             modelData.selected)
-                                             ? mixerWindow.liveLevelDb(modelData.index)
-                                             : -60) + 60) / 60))
-                                    height: parent.height
-                                    radius: 2
-                                    color: width > parent.width * 0.9 ? "#ef5350"
-                                          : (width > parent.width * 0.75 ? "#fbc02d" : "#43a047")
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: trackRow.modelData.hasRecommendation
+                                    text: "おすすめゲイン: "
+                                          + (trackRow.modelData.recommendedGainDb >= 0 ? "+" : "")
+                                          + Number(trackRow.modelData.recommendedGainDb).toFixed(1)
+                                          + " dB"
+                                    color: mixerWindow.palette.highlight
+                                    font.pixelSize: 11
+                                    font.bold: true
                                 }
                             }
+
+                            Label {
+                                text: "-30"
+                                font.pixelSize: 10
+                                opacity: 0.65
+                            }
+
+                            Slider {
+                                id: gainSlider
+                                Layout.fillWidth: true
+                                from: -30
+                                to: 30
+                                stepSize: 0.5
+                                value: trackRow.modelData.gainDb
+                                enabled: trackRow.modelData.selected && !backend.busy
+                                         && !backend.analyzingAudio
+                                onMoved: {
+                                    if (!pressed)
+                                        backend.setAudioTrackGainDb(trackRow.modelData.index, value)
+                                }
+                                onPressedChanged: {
+                                    if (!pressed)
+                                        backend.setAudioTrackGainDb(trackRow.modelData.index, value)
+                                }
+                                Accessible.name: trackRow.modelData.label + " のゲイン"
+                            }
+
+                            Label {
+                                text: "+30"
+                                font.pixelSize: 10
+                                opacity: 0.65
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 62
+                                horizontalAlignment: Text.AlignRight
+                                text: (gainSlider.value >= 0 ? "+" : "")
+                                      + Number(gainSlider.value).toFixed(1) + " dB"
+                                font.family: "monospace"
+                            }
+
+                            Button {
+                                text: trackRow.modelData.hasRecommendation ? "おすすめ" : "0 dB"
+                                enabled: !backend.busy && !backend.analyzingAudio
+                                onClicked: backend.setAudioTrackGainDb(
+                                               trackRow.modelData.index,
+                                               trackRow.modelData.hasRecommendation
+                                               ? trackRow.modelData.recommendedGainDb : 0)
+                            }
+
+                            Button {
+                                Layout.preferredWidth: 76
+                                // Not `checkable`: clicking a checkable Button
+                                // overwrites `checked` and breaks the binding to
+                                // backend.monitoredAudioTrack, leaving stale
+                                // "モニター中" labels on other rows.
+                                readonly property bool monitoring:
+                                    backend.monitoredAudioTrack === trackRow.modelData.index
+                                text: monitoring ? "モニター中" : "モニター"
+                                highlighted: monitoring
+                                enabled: trackRow.modelData.selected && !backend.busy
+                                onClicked: backend.setMonitoredAudioTrack(
+                                               monitoring ? -1 : trackRow.modelData.index)
+
+                                ToolTip.visible: hovered
+                                ToolTip.text: trackRow.modelData.selected
+                                              ? "選択中のこのトラックだけをプレビューします。"
+                                              : "先にこのトラックを出力対象としてチェックしてください。"
+                            }
                         }
 
-                        Label {
-                            text: "-30"
-                            font.pixelSize: 10
-                            opacity: 0.65
-                        }
-
-                        Slider {
-                            id: gainSlider
+                        WaveformStrip {
                             Layout.fillWidth: true
-                            from: -30
-                            to: 30
-                            stepSize: 0.5
-                            value: modelData.gainDb
-                            enabled: modelData.selected && !backend.busy && !backend.analyzingAudio
-                            onMoved: {
-                                if (!pressed)
-                                    backend.setAudioTrackGainDb(modelData.index, value)
-                            }
-                            onPressedChanged: {
-                                if (!pressed)
-                                    backend.setAudioTrackGainDb(modelData.index, value)
-                            }
-                            Accessible.name: modelData.label + " のゲイン"
-                        }
-
-                        Label {
-                            text: "+30"
-                            font.pixelSize: 10
-                            opacity: 0.65
-                        }
-
-                        Label {
-                            Layout.preferredWidth: 62
-                            horizontalAlignment: Text.AlignRight
-                            text: (gainSlider.value >= 0 ? "+" : "")
-                                  + Number(gainSlider.value).toFixed(1) + " dB"
-                            font.family: "monospace"
-                        }
-
-                        Button {
-                            text: modelData.hasRecommendation ? "おすすめ" : "0 dB"
-                            enabled: !backend.busy && !backend.analyzingAudio
-                            onClicked: backend.setAudioTrackGainDb(
-                                           modelData.index,
-                                           modelData.hasRecommendation
-                                           ? modelData.recommendedGainDb : 0)
-                        }
-
-                        Button {
-                            Layout.preferredWidth: 76
-                            text: checked ? "モニター中" : "モニター"
-                            checkable: true
-                            checked: backend.monitoredAudioTrack === modelData.index
-                            enabled: modelData.selected && !backend.busy
-                            onClicked: backend.setMonitoredAudioTrack(
-                                           checked ? modelData.index : -1)
-
-                            ToolTip.visible: hovered
-                            ToolTip.text: modelData.selected
-                                          ? "選択中のこのトラックだけをプレビューします。"
-                                          : "先にこのトラックを出力対象としてチェックしてください。"
+                            Layout.fillHeight: true
+                            trackIndex: trackRow.modelData.index
+                            active: mixerWindow.previewPlaying && trackRow.previewed
+                            accentColor: backend.monitoredAudioTrack === trackRow.modelData.index
+                                         ? "#ec64a5" : "#43a047"
+                            caption: trackRow.previewed
+                                     ? "" : (trackRow.modelData.selected ? "モニター対象外" : "未選択")
                         }
                     }
                 }

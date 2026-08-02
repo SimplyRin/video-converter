@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QStringList>
+#include <QTimer>
 #include <QUrl>
 #include <QVariantList>
 
@@ -24,6 +25,9 @@ class AppController final : public QObject
     Q_PROPERTY(QVariantList videoTracks READ videoTracks NOTIFY mediaTracksChanged)
     Q_PROPERTY(QVariantList audioTracks READ audioTracks NOTIFY mediaTracksChanged)
     Q_PROPERTY(QVariantList audioTrackLevels READ audioTrackLevels NOTIFY audioTrackLevelsChanged)
+    Q_PROPERTY(bool audioWaveformCapturing READ audioWaveformCapturing WRITE setAudioWaveformCapturing NOTIFY audioWaveformCapturingChanged)
+    Q_PROPERTY(int audioWaveformSampleCount READ audioWaveformSampleCount CONSTANT)
+    Q_PROPERTY(bool audioMeteringAvailable READ audioMeteringAvailable NOTIFY audioMeteringAvailableChanged)
     Q_PROPERTY(int selectedVideoTrack READ selectedVideoTrack WRITE setSelectedVideoTrack NOTIFY mediaTracksChanged)
     Q_PROPERTY(int monitoredAudioTrack READ monitoredAudioTrack WRITE setMonitoredAudioTrack NOTIFY audioMonitorChanged)
     Q_PROPERTY(bool tracksLoading READ tracksLoading NOTIFY mediaTracksChanged)
@@ -55,6 +59,9 @@ public:
     [[nodiscard]] QVariantList videoTracks() const;
     [[nodiscard]] QVariantList audioTracks() const;
     [[nodiscard]] QVariantList audioTrackLevels() const;
+    [[nodiscard]] bool audioWaveformCapturing() const;
+    [[nodiscard]] int audioWaveformSampleCount() const;
+    [[nodiscard]] bool audioMeteringAvailable() const;
     [[nodiscard]] int selectedVideoTrack() const;
     [[nodiscard]] int monitoredAudioTrack() const;
     [[nodiscard]] bool tracksLoading() const;
@@ -82,6 +89,16 @@ public:
     Q_INVOKABLE void setAudioTrackGainDb(int trackIndex, double gainDb);
     Q_INVOKABLE void setAudioTrackLevelDb(int trackIndex, double levelDb);
     Q_INVOKABLE void resetAudioTrackLevels();
+    Q_INVOKABLE void setAudioWaveformCapturing(bool capturing);
+    Q_INVOKABLE void clearAudioWaveforms();
+    Q_INVOKABLE void reportAudioMeteringAvailable();
+    // Waveform history, oldest sample first, in dBFS. Kept here rather than in
+    // the QML delegates because backend.audioTracks is rebuilt on every
+    // mediaTracksChanged(), which destroys and recreates every delegate.
+    [[nodiscard]] Q_INVOKABLE QVariantList audioTrackWaveform(int trackIndex) const;
+    [[nodiscard]] Q_INVOKABLE QVariantList audioMixWaveform() const;
+    [[nodiscard]] Q_INVOKABLE double audioTrackLevelDb(int trackIndex) const;
+    [[nodiscard]] Q_INVOKABLE double audioMixLevelDb() const;
     Q_INVOKABLE void setMonitoredAudioTrack(int trackIndex);
     Q_INVOKABLE void autoAdjustAudioTracks(double targetDb = -8.0,
                                            bool analyzeAllTracks = false);
@@ -105,6 +122,11 @@ signals:
     void toolsChanged();
     void mediaTracksChanged();
     void audioTrackLevelsChanged();
+    void audioWaveformCapturingChanged();
+    void audioMeteringAvailableChanged();
+    // Emitted once per capture tick, after every waveform history has grown by
+    // one sample. QML canvases repaint on this instead of binding to a list.
+    void audioWaveformSampled();
     void audioMonitorChanged();
     void audioAnalysisChanged();
     void updateStateChanged();
@@ -144,6 +166,8 @@ private:
     void finishAudioAnalysis();
     void consumeAudioAnalysisProgressOutput();
     void updateAudioAnalysisProgress(double trackProgress);
+    void sampleAudioWaveforms();
+    void resizeAudioWaveforms();
     [[nodiscard]] QList<int> selectedAudioTrackIndices() const;
     [[nodiscard]] QString audioFilterGraph(bool cacheInput) const;
     void probeDuration(int targetSizeMiB,
@@ -206,6 +230,11 @@ private:
     QList<VideoTrackInfo> m_videoTracks;
     QList<AudioTrackInfo> m_audioTracks;
     QList<double> m_audioTrackLevels;
+    QList<QList<double>> m_audioTrackWaveforms;
+    QList<double> m_audioMixWaveform;
+    QTimer m_audioWaveformTimer;
+    bool m_audioWaveformCapturing = false;
+    bool m_audioMeteringAvailable = false;
     int m_selectedVideoTrack = 0;
     int m_monitoredAudioTrack = -1;
     qint64 m_mediaDurationMs = 0;
