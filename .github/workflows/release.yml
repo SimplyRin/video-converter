@@ -22,7 +22,7 @@ jobs:
       release_tag: ${{ steps.metadata.outputs.release_tag }}
       is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -85,7 +85,7 @@ jobs:
       VERSION: ${{ needs.metadata.outputs.version }}
       BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -157,8 +157,39 @@ jobs:
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
       BUILD_NUMBER: ${{ needs.metadata.outputs.build_number }}
+      FFMPEG_CACHE_DIR: ${{ runner.temp }}/discordvideo-ffmpeg-cache/macos-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - id: ffmpeg-cache-key
+        name: Calculate FFmpeg source cache key
+        shell: bash
+        run: |
+          source_fingerprint="$({
+            shasum -a 256 .github/scripts/ffmpeg-macos-versions.env
+            shasum -a 256 .github/scripts/build-ffmpeg-macos.sh
+          } | shasum -a 256 | awk '{print $1}')"
+          echo "key=discordvideo-ffmpeg-macos14-arm64-${source_fingerprint}" \
+            >> "${GITHUB_OUTPUT}"
+
+      - id: ffmpeg-cache
+        name: Restore compiled FFmpeg cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.FFMPEG_CACHE_DIR }}
+          key: ${{ steps.ffmpeg-cache-key.outputs.key }}
+
+      - id: ffmpeg-cache-validation
+        name: Validate compiled FFmpeg cache
+        shell: bash
+        run: |
+          if bash .github/scripts/build-ffmpeg-macos.sh --validate "${FFMPEG_CACHE_DIR}"; then
+            echo "valid=true" >> "${GITHUB_OUTPUT}"
+            echo "A valid compiled FFmpeg cache will be used."
+          else
+            echo "valid=false" >> "${GITHUB_OUTPUT}"
+            echo "FFmpeg will be rebuilt from its pinned sources."
+          fi
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -171,7 +202,12 @@ jobs:
           cache: true
 
       - name: Install FFmpeg build tools
+        if: steps.ffmpeg-cache-validation.outputs.valid != 'true'
         run: brew install nasm pkgconf
+
+      - name: Build FFmpeg from source
+        if: steps.ffmpeg-cache-validation.outputs.valid != 'true'
+        run: bash .github/scripts/build-ffmpeg-macos.sh "${FFMPEG_CACHE_DIR}"
 
       - name: Configure
         run: >-
@@ -196,7 +232,8 @@ jobs:
           bash .github/scripts/package-macos.sh \
             "${VERSION}" \
             "${BUILD_NUMBER}" \
-            "${RUNNER_TEMP}/release-assets"
+            "${RUNNER_TEMP}/release-assets" \
+            "${FFMPEG_CACHE_DIR}"
 
       - name: Upload macOS asset
         uses: actions/upload-artifact@v4

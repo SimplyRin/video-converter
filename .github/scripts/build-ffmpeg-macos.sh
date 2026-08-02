@@ -2,16 +2,52 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=ffmpeg-macos-versions.env
+source "${script_dir}/ffmpeg-macos-versions.env"
+
+validation_only="false"
+if [[ "${1:-}" == "--validate" ]]; then
+    validation_only="true"
+    shift
+fi
 output_dir="${1:?Output directory is required}"
+manifest_path="${output_dir}/.discordvideo-ffmpeg-cache-manifest"
+script_sha256="$(shasum -a 256 "$0" | awk '{print $1}')"
+cache_identity="schema=${FFMPEG_CACHE_SCHEMA};ffmpeg=${FFMPEG_VERSION};ffmpeg_sha256=${FFMPEG_SHA256};x264=${X264_COMMIT};deployment=${FFMPEG_MACOS_DEPLOYMENT_TARGET};arch=arm64;script=${script_sha256}"
+
+validate_output() {
+    [[ -f "${manifest_path}" ]] || return 1
+    [[ "$(<"${manifest_path}")" == "${cache_identity}" ]] || return 1
+    [[ -x "${output_dir}/ffmpeg" && -x "${output_dir}/ffprobe" ]] || return 1
+    [[ -f "${output_dir}/FFmpeg-COPYING.GPLv3" ]] || return 1
+    [[ -f "${output_dir}/x264-COPYING" ]] || return 1
+    for binary in ffmpeg ffprobe; do
+        file "${output_dir}/${binary}" | grep -F arm64 >/dev/null || return 1
+    done
+    "${output_dir}/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -F libx264 >/dev/null || return 1
+    "${output_dir}/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -F h264_videotoolbox >/dev/null || return 1
+    "${output_dir}/ffmpeg" -version 2>/dev/null | sed -n '1p' | grep -F "ffmpeg version ${FFMPEG_VERSION}" >/dev/null || return 1
+    "${output_dir}/ffprobe" -version 2>/dev/null | sed -n '1p' | grep -F "ffprobe version ${FFMPEG_VERSION}" >/dev/null || return 1
+}
+
+if validate_output; then
+    echo "Using cached FFmpeg ${FFMPEG_VERSION} / x264 ${X264_COMMIT} from ${output_dir}."
+    exit 0
+fi
+
+if [[ "${validation_only}" == "true" ]]; then
+    echo "A valid cached FFmpeg build was not found in ${output_dir}."
+    exit 1
+fi
+
 work_root="$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/discordvideo-ffmpeg-build.XXXXXX")"
 x264_source="${work_root}/x264"
 x264_prefix="${work_root}/x264-install"
-ffmpeg_source="${work_root}/ffmpeg-8.1.2"
+ffmpeg_source="${work_root}/ffmpeg-${FFMPEG_VERSION}"
 ffmpeg_prefix="${work_root}/ffmpeg-install"
-ffmpeg_archive="${work_root}/ffmpeg-8.1.2.tar.xz"
-
-ffmpeg_sha256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
-x264_commit="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+ffmpeg_archive="${work_root}/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+trap 'rm -rf "${work_root}"' EXIT
 
 if [[ "$(uname -m)" != "arm64" ]]; then
     echo "The macOS release must be built on an arm64 runner." >&2
@@ -19,11 +55,16 @@ if [[ "$(uname -m)" != "arm64" ]]; then
 fi
 
 mkdir -p "${work_root}" "${output_dir}"
+rm -f "${manifest_path}" \
+    "${output_dir}/ffmpeg" \
+    "${output_dir}/ffprobe" \
+    "${output_dir}/FFmpeg-COPYING.GPLv3" \
+    "${output_dir}/x264-COPYING"
 
 git clone --filter=blob:none https://code.videolan.org/videolan/x264.git "${x264_source}"
-git -C "${x264_source}" checkout --detach "${x264_commit}"
+git -C "${x264_source}" checkout --detach "${X264_COMMIT}"
 
-export MACOSX_DEPLOYMENT_TARGET=13.0
+export MACOSX_DEPLOYMENT_TARGET="${FFMPEG_MACOS_DEPLOYMENT_TARGET}"
 
 (
     cd "${x264_source}"
@@ -39,8 +80,8 @@ export MACOSX_DEPLOYMENT_TARGET=13.0
 
 curl --proto '=https' --tlsv1.2 --fail --location --retry 5 \
     --output "${ffmpeg_archive}" \
-    https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
-echo "${ffmpeg_sha256}  ${ffmpeg_archive}" | shasum -a 256 --check
+    "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+echo "${FFMPEG_SHA256}  ${ffmpeg_archive}" | shasum -a 256 --check
 tar -C "${work_root}" -xf "${ffmpeg_archive}"
 
 (
@@ -80,3 +121,12 @@ fi
 "${output_dir}/ffmpeg" -hide_banner -encoders | grep -F libx264
 "${output_dir}/ffmpeg" -hide_banner -encoders | grep -F h264_videotoolbox
 "${output_dir}/ffprobe" -version | sed -n '1p'
+
+printf '%s\n' "${cache_identity}" > "${manifest_path}"
+if ! validate_output; then
+    rm -f "${manifest_path}"
+    echo "The completed FFmpeg build did not pass cache validation." >&2
+    exit 1
+fi
+
+echo "FFmpeg build cache prepared at ${output_dir}."

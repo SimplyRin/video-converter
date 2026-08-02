@@ -32,6 +32,11 @@ Qt版はWebViewとXMLを使用しません。画面はQML、アプリケーシ�
 FFmpegはBtbN/FFmpeg-Buildsから取得します。BtbNはmacOSバイナリを提供していないため、macOS版は
 Actionsのarm64ランナー上でFFmpegとx264をソースからビルドします。
 
+macOS版のFFmpegビルド成果物はGitHub Actions Cacheへ保存します。FFmpegのバージョンとSHA-256、
+x264コミット、ビルドスクリプト、対象OS/CPUが前回と一致し、復元したバイナリが
+検証を通過した場合はソースビルドを省略します。いずれかが変わった場合やキャッシュが無効な場合は、
+自動的にソースから再ビルドします。
+
 Windows版の実行ファイルとランタイムは、ZIP内で次のように`bin/`へまとめています。
 
 ```text
