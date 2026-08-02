@@ -28,16 +28,6 @@ ApplicationWindow {
         requestActivate()
     }
 
-    function selectedAudioCount() {
-        let count = 0
-        const tracks = backend.audioTracks
-        for (let index = 0; index < tracks.length; ++index) {
-            if (tracks[index].selected)
-                ++count
-        }
-        return count
-    }
-
     function isTrackPreviewed(trackIndex, selected) {
         return backend.monitoredAudioTrack >= 0
                ? backend.monitoredAudioTrack === trackIndex : selected
@@ -185,14 +175,14 @@ ApplicationWindow {
             Button {
                 text: "すべて選択"
                 enabled: !backend.busy && !backend.analyzingAudio
-                         && backend.audioTracks.length > 0
+                         && backend.audioTrackModel.count > 0
                 onClicked: backend.setAllAudioTracksSelected(true)
             }
 
             Button {
                 text: "すべて解除"
                 enabled: !backend.busy && !backend.analyzingAudio
-                         && backend.audioTracks.length > 0
+                         && backend.audioTrackModel.count > 0
                 onClicked: backend.setAllAudioTracksSelected(false)
             }
 
@@ -211,7 +201,7 @@ ApplicationWindow {
             accentColor: "#ec64a5"
             caption: backend.monitoredAudioTrack >= 0
                      ? "音声トラック " + backend.monitoredAudioTrack + " をモニター中"
-                     : "選択トラックのミックス (" + mixerWindow.selectedAudioCount() + " トラック)"
+                     : "選択トラックのミックス (" + backend.audioTrackModel.selectedCount + " トラック)"
         }
 
         Label {
@@ -248,14 +238,21 @@ ApplicationWindow {
                 anchors.margins: 1
                 clip: true
                 spacing: 1
-                model: backend.audioTracks
+                model: backend.audioTrackModel
 
                 delegate: Rectangle {
                     id: trackRow
-                    required property var modelData
                     required property int index
-                    property bool previewed: mixerWindow.isTrackPreviewed(modelData.index,
-                                                                          modelData.selected)
+                    required property int trackIndex
+                    required property string label
+                    required property bool selected
+                    required property double gainDb
+                    required property bool hasMeasurement
+                    required property double meanVolumeDb
+                    required property bool hasRecommendation
+                    required property double recommendedGainDb
+                    property bool previewed: mixerWindow.isTrackPreviewed(trackIndex,
+                                                                          selected)
                     width: trackList.width
                     height: 132
                     color: index % 2 === 0 ? mixerWindow.palette.alternateBase
@@ -275,11 +272,16 @@ ApplicationWindow {
 
                             CheckBox {
                                 id: enabledCheck
-                                checked: trackRow.modelData.selected
                                 enabled: !backend.busy && !backend.analyzingAudio
                                 onToggled: backend.setAudioTrackSelected(
-                                               trackRow.modelData.index, checked)
-                                Accessible.name: trackRow.modelData.label + " を出力に含める"
+                                               trackRow.trackIndex, checked)
+                                Accessible.name: trackRow.label + " を出力に含める"
+                                // A user click writes `checked` directly, which
+                                // would break a plain binding now that delegates
+                                // survive model updates. Binding keeps it synced.
+                                Binding on checked {
+                                    value: trackRow.selected
+                                }
                             }
 
                             ColumnLayout {
@@ -289,18 +291,18 @@ ApplicationWindow {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: trackRow.modelData.label
+                                    text: trackRow.label
                                     elide: Text.ElideRight
                                     font.bold: true
                                 }
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: trackRow.modelData.hasMeasurement
+                                    text: trackRow.hasMeasurement
                                           ? "測定平均: "
-                                            + Number(trackRow.modelData.meanVolumeDb).toFixed(1)
+                                            + Number(trackRow.meanVolumeDb).toFixed(1)
                                             + " dBFS / 補正後: "
-                                            + Number(trackRow.modelData.meanVolumeDb
+                                            + Number(trackRow.meanVolumeDb
                                                      + gainSlider.value).toFixed(1) + " dBFS"
                                           : "平均音量: 未測定"
                                     font.pixelSize: 11
@@ -309,10 +311,10 @@ ApplicationWindow {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    visible: trackRow.modelData.hasRecommendation
+                                    visible: trackRow.hasRecommendation
                                     text: "おすすめゲイン: "
-                                          + (trackRow.modelData.recommendedGainDb >= 0 ? "+" : "")
-                                          + Number(trackRow.modelData.recommendedGainDb).toFixed(1)
+                                          + (trackRow.recommendedGainDb >= 0 ? "+" : "")
+                                          + Number(trackRow.recommendedGainDb).toFixed(1)
                                           + " dB"
                                     color: mixerWindow.palette.highlight
                                     font.pixelSize: 11
@@ -332,18 +334,24 @@ ApplicationWindow {
                                 from: -30
                                 to: 30
                                 stepSize: 0.5
-                                value: trackRow.modelData.gainDb
-                                enabled: trackRow.modelData.selected && !backend.busy
+                                enabled: trackRow.selected && !backend.busy
                                          && !backend.analyzingAudio
                                 onMoved: {
                                     if (!pressed)
-                                        backend.setAudioTrackGainDb(trackRow.modelData.index, value)
+                                        backend.setAudioTrackGainDb(trackRow.trackIndex, value)
                                 }
                                 onPressedChanged: {
                                     if (!pressed)
-                                        backend.setAudioTrackGainDb(trackRow.modelData.index, value)
+                                        backend.setAudioTrackGainDb(trackRow.trackIndex, value)
                                 }
-                                Accessible.name: trackRow.modelData.label + " のゲイン"
+                                Accessible.name: trackRow.label + " のゲイン"
+                                // Dragging writes `value` directly, which would
+                                // break a plain binding now that delegates
+                                // survive model updates. Binding keeps it synced
+                                // with the backend gain (e.g. after 自動調整).
+                                Binding on value {
+                                    value: trackRow.gainDb
+                                }
                             }
 
                             Label {
@@ -361,12 +369,12 @@ ApplicationWindow {
                             }
 
                             Button {
-                                text: trackRow.modelData.hasRecommendation ? "おすすめ" : "0 dB"
+                                text: trackRow.hasRecommendation ? "おすすめ" : "0 dB"
                                 enabled: !backend.busy && !backend.analyzingAudio
                                 onClicked: backend.setAudioTrackGainDb(
-                                               trackRow.modelData.index,
-                                               trackRow.modelData.hasRecommendation
-                                               ? trackRow.modelData.recommendedGainDb : 0)
+                                               trackRow.trackIndex,
+                                               trackRow.hasRecommendation
+                                               ? trackRow.recommendedGainDb : 0)
                             }
 
                             Button {
@@ -376,15 +384,15 @@ ApplicationWindow {
                                 // backend.monitoredAudioTrack, leaving stale
                                 // "モニター中" labels on other rows.
                                 readonly property bool monitoring:
-                                    backend.monitoredAudioTrack === trackRow.modelData.index
+                                    backend.monitoredAudioTrack === trackRow.trackIndex
                                 text: monitoring ? "モニター中" : "モニター"
                                 highlighted: monitoring
-                                enabled: trackRow.modelData.selected && !backend.busy
+                                enabled: trackRow.selected && !backend.busy
                                 onClicked: backend.setMonitoredAudioTrack(
-                                               monitoring ? -1 : trackRow.modelData.index)
+                                               monitoring ? -1 : trackRow.trackIndex)
 
                                 ToolTip.visible: hovered
-                                ToolTip.text: trackRow.modelData.selected
+                                ToolTip.text: trackRow.selected
                                               ? "選択中のこのトラックだけをプレビューします。"
                                               : "先にこのトラックを出力対象としてチェックしてください。"
                             }
@@ -393,12 +401,12 @@ ApplicationWindow {
                         WaveformStrip {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            trackIndex: trackRow.modelData.index
+                            trackIndex: trackRow.trackIndex
                             active: mixerWindow.previewPlaying && trackRow.previewed
-                            accentColor: backend.monitoredAudioTrack === trackRow.modelData.index
+                            accentColor: backend.monitoredAudioTrack === trackRow.trackIndex
                                          ? "#ec64a5" : "#43a047"
                             caption: trackRow.previewed
-                                     ? "" : (trackRow.modelData.selected ? "モニター対象外" : "未選択")
+                                     ? "" : (trackRow.selected ? "モニター対象外" : "未選択")
                         }
                     }
                 }
@@ -449,7 +457,7 @@ ApplicationWindow {
                 text: backend.analyzingAudio ? "解析中…" : "自動"
                 highlighted: true
                 enabled: !backend.analyzingAudio && !backend.busy
-                         && backend.audioTracks.length > 0
+                         && backend.audioTrackModel.count > 0
                          && targetLevel.acceptableInput
                 onClicked: {
                     analysisScopeDialog.targetDb = Number.fromLocaleString(
@@ -526,7 +534,7 @@ ApplicationWindow {
 
             Button {
                 text: "チェック済みのみ"
-                enabled: mixerWindow.selectedAudioCount() > 0
+                enabled: backend.audioTrackModel.selectedCount > 0
                 DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
                 onClicked: {
                     analysisScopeDialog.close()

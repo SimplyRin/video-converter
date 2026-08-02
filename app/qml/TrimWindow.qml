@@ -25,16 +25,6 @@ ApplicationWindow {
     property double endPosition: -1
     property url previewSource: ""
 
-    function selectedAudioCount() {
-        let count = 0
-        const tracks = backend.audioTracks
-        for (let index = 0; index < tracks.length; ++index) {
-            if (tracks[index].selected)
-                ++count
-        }
-        return count
-    }
-
     function synchronizeAudioPreviews(forcePosition) {
         for (let index = 0; index < audioPreviewPlayers.count; ++index) {
             const preview = audioPreviewPlayers.objectAt(index)
@@ -91,21 +81,22 @@ ApplicationWindow {
 
     Instantiator {
         id: audioPreviewPlayers
-        model: backend.audioTracks
+        model: backend.audioTrackModel
 
         delegate: Item {
             id: audioPreview
 
-            required property var modelData
-            property bool trackSelected: Boolean(modelData.selected)
-            property bool previewEnabled: trackSelected
+            required property int trackIndex
+            required property bool selected
+            required property double gainDb
+            property bool previewEnabled: selected
                                           && (backend.monitoredAudioTrack < 0
                                               || backend.monitoredAudioTrack
-                                                 === modelData.index)
+                                                 === trackIndex)
             visible: false
 
             function applyConfiguredTrack() {
-                const configuredTrack = Number(modelData.index)
+                const configuredTrack = audioPreview.trackIndex
                 if (!previewEnabled
                     || configuredTrack < 0
                     || trackPlayer.audioTracks.length <= configuredTrack) {
@@ -123,7 +114,7 @@ ApplicationWindow {
                 if (!previewEnabled || trimWindow.previewSource.toString().length === 0) {
                     trackPlayer.stop()
                     levelMeter.reset()
-                    backend.setAudioTrackLevelDb(modelData.index, -60)
+                    backend.setAudioTrackLevelDb(audioPreview.trackIndex, -60)
                     return
                 }
 
@@ -155,7 +146,7 @@ ApplicationWindow {
                 }
             }
 
-            onTrackSelectedChanged: Qt.callLater(function() {
+            onSelectedChanged: Qt.callLater(function() {
                 audioPreview.synchronize(true)
             })
             onPreviewEnabledChanged: Qt.callLater(function() {
@@ -166,16 +157,16 @@ ApplicationWindow {
                 id: trackAudioOutput
                 muted: !audioPreview.previewEnabled
                        || trackPlayer.activeAudioTrack
-                          !== Number(audioPreview.modelData.index)
+                          !== audioPreview.trackIndex
                 volume: Math.max(0, Math.min(1,
-                            0.05 * Math.pow(10, Number(audioPreview.modelData.gainDb) / 20)))
+                            0.05 * Math.pow(10, audioPreview.gainDb / 20)))
             }
 
             AudioLevelMeter {
                 id: levelMeter
-                gainDb: Number(audioPreview.modelData.gainDb)
+                gainDb: audioPreview.gainDb
                 onLevelDbChanged: backend.setAudioTrackLevelDb(
-                                      audioPreview.modelData.index, levelDb)
+                                      audioPreview.trackIndex, levelDb)
                 // Tell the backend once any media backend actually delivers
                 // audio buffers, so the mixer can explain a flat waveform.
                 onReceivingBuffersChanged: {
@@ -201,7 +192,7 @@ ApplicationWindow {
                 })
 
                 onActiveAudioTrackChanged: {
-                    if (activeAudioTrack !== Number(audioPreview.modelData.index)) {
+                    if (activeAudioTrack !== audioPreview.trackIndex) {
                         levelMeter.reset()
                     }
                     Qt.callLater(function() {
@@ -218,7 +209,7 @@ ApplicationWindow {
 
             Component.onDestruction: {
                 levelMeter.reset()
-                backend.setAudioTrackLevelDb(audioPreview.modelData.index, -60)
+                backend.setAudioTrackLevelDb(audioPreview.trackIndex, -60)
             }
         }
     }
@@ -231,8 +222,8 @@ ApplicationWindow {
         onTriggered: trimWindow.synchronizeAudioPreviews(false)
     }
 
-    // The waveform history lives in the backend so it survives the delegate
-    // teardown that mediaTracksChanged() causes in the mixer and here.
+    // The waveform history lives in the backend so it survives delegate
+    // teardown when a new file resets the audio track model.
     Binding {
         target: backend
         property: "audioWaveformCapturing"
@@ -297,10 +288,10 @@ ApplicationWindow {
 
             Button {
                 id: audioTrackButton
-                visible: backend.audioTracks.length > 0
+                visible: backend.audioTrackModel.count > 0
                 enabled: !backend.busy && !backend.tracksLoading && !backend.analyzingAudio
-                text: "音声トラック (" + trimWindow.selectedAudioCount()
-                      + "/" + backend.audioTracks.length + ") ▾"
+                text: "音声トラック (" + backend.audioTrackModel.selectedCount
+                      + "/" + backend.audioTrackModel.count + ") ▾"
                 onClicked: audioTrackMenu.popup()
 
                 ToolTip.visible: hovered
@@ -310,13 +301,21 @@ ApplicationWindow {
                     id: audioTrackMenu
 
                     Instantiator {
-                        model: backend.audioTracks
+                        model: backend.audioTrackModel
                         delegate: MenuItem {
-                            required property var modelData
-                            text: modelData.label
+                            id: audioTrackMenuItem
+                            required property int trackIndex
+                            required property bool selected
+                            required property string label
+                            text: label
                             checkable: true
-                            checked: modelData.selected
-                            onTriggered: backend.setAudioTrackSelected(modelData.index, !modelData.selected)
+                            onTriggered: backend.setAudioTrackSelected(trackIndex, !selected)
+                            // A user click writes `checked` directly, which
+                            // would break a plain binding now that delegates
+                            // survive model updates. Binding keeps it synced.
+                            Binding on checked {
+                                value: audioTrackMenuItem.selected
+                            }
                         }
                         onObjectAdded: function(index, object) {
                             audioTrackMenu.insertItem(index, object)
@@ -336,7 +335,7 @@ ApplicationWindow {
             }
 
             Button {
-                visible: backend.audioTracks.length > 0
+                visible: backend.audioTrackModel.count > 0
                 enabled: !backend.busy
                 text: "ミキサー"
                 onClicked: audioMixerWindow.openMixer()

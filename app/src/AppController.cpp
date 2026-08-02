@@ -140,6 +140,7 @@ QString readEmbeddedTextFile(const QString &path)
 AppController::AppController(QObject *parent)
     : QObject(parent)
 {
+    m_audioTrackModel = new AudioTrackModel(&m_audioTracks, this);
     m_prereleaseBuild = parseReleaseVersion(currentVersion()).prerelease;
     const QSettings settings;
     m_includePrereleaseUpdates = m_prereleaseBuild
@@ -251,6 +252,7 @@ AppController::AppController(QObject *parent)
                     emit audioTrackLevelsChanged();
                     emit audioMonitorChanged();
                 }
+                m_audioTrackModel->notifyReset();
                 emit mediaTracksChanged();
             });
 
@@ -290,7 +292,9 @@ AppController::AppController(QObject *parent)
                 }
 
                 m_audioAnalysisCurrentTrack = -1;
-                emit mediaTracksChanged();
+                m_audioTrackModel->notifyTrackChanged(
+                    trackIndex,
+                    {AudioTrackModel::HasMeasurementRole, AudioTrackModel::MeanVolumeDbRole});
                 startNextAudioAnalysis();
             });
 
@@ -375,44 +379,9 @@ QVariantList AppController::videoTracks() const
     return result;
 }
 
-QVariantList AppController::audioTracks() const
+AudioTrackModel *AppController::audioTrackModel() const
 {
-    QVariantList result;
-    for (qsizetype index = 0; index < m_audioTracks.size(); ++index) {
-        const AudioTrackInfo &track = m_audioTracks.at(index);
-        QStringList details;
-        if (!track.codec.isEmpty()) {
-            details.append(track.codec.toUpper());
-        }
-        if (!track.channelLayout.isEmpty()) {
-            details.append(track.channelLayout);
-        } else if (track.channels > 0) {
-            details.append(QStringLiteral("%1 ch").arg(track.channels));
-        }
-        if (!track.language.isEmpty() && track.language != QStringLiteral("und")) {
-            details.append(track.language);
-        }
-        if (!track.title.isEmpty()) {
-            details.append(track.title);
-        }
-
-        QVariantMap item;
-        item.insert(QStringLiteral("index"), index);
-        item.insert(QStringLiteral("streamIndex"), track.streamIndex);
-        item.insert(QStringLiteral("label"),
-                    QStringLiteral("%1: %2")
-                        .arg(index)
-                        .arg(details.isEmpty() ? QStringLiteral("音声トラック")
-                                               : details.join(QStringLiteral(" · "))));
-        item.insert(QStringLiteral("selected"), track.selected);
-        item.insert(QStringLiteral("gainDb"), track.gainDb);
-        item.insert(QStringLiteral("hasMeasurement"), track.hasMeasurement);
-        item.insert(QStringLiteral("meanVolumeDb"), track.measuredMeanDb);
-        item.insert(QStringLiteral("hasRecommendation"), track.hasRecommendation);
-        item.insert(QStringLiteral("recommendedGainDb"), track.recommendedGainDb);
-        result.append(item);
-    }
-    return result;
+    return m_audioTrackModel;
 }
 
 QVariantList AppController::audioTrackLevels() const
@@ -539,6 +508,7 @@ void AppController::selectFile(const QUrl &url)
         emit audioMeteringAvailableChanged();
     }
     emit selectedFileChanged();
+    m_audioTrackModel->notifyReset();
     emit mediaTracksChanged();
     emit audioTrackLevelsChanged();
     emit audioMonitorChanged();
@@ -593,6 +563,7 @@ void AppController::clearSelectedFile()
         emit audioMeteringAvailableChanged();
     }
     emit selectedFileChanged();
+    m_audioTrackModel->notifyReset();
     emit mediaTracksChanged();
     emit audioTrackLevelsChanged();
     emit audioMonitorChanged();
@@ -629,7 +600,7 @@ void AppController::setAudioTrackSelected(int trackIndex, bool selected)
         resetAudioTrackLevels();
         emit audioMonitorChanged();
     }
-    emit mediaTracksChanged();
+    m_audioTrackModel->notifyTrackChanged(trackIndex, {AudioTrackModel::SelectedRole});
 }
 
 void AppController::setAllAudioTracksSelected(bool selected)
@@ -650,7 +621,7 @@ void AppController::setAllAudioTracksSelected(bool selected)
             resetAudioTrackLevels();
             emit audioMonitorChanged();
         }
-        emit mediaTracksChanged();
+        m_audioTrackModel->notifyAllTracksChanged({AudioTrackModel::SelectedRole});
     }
 }
 
@@ -665,7 +636,7 @@ void AppController::setAudioTrackGainDb(int trackIndex, double gainDb)
         return;
     }
     m_audioTracks[trackIndex].gainDb = adjustedGain;
-    emit mediaTracksChanged();
+    m_audioTrackModel->notifyTrackChanged(trackIndex, {AudioTrackModel::GainDbRole});
 }
 
 void AppController::setAudioTrackLevelDb(int trackIndex, double levelDb)
@@ -852,7 +823,7 @@ void AppController::autoAdjustAudioTracks(double targetDb, bool analyzeAllTracks
         for (AudioTrackInfo &track : m_audioTracks) {
             track.selected = true;
         }
-        emit mediaTracksChanged();
+        m_audioTrackModel->notifyAllTracksChanged({AudioTrackModel::SelectedRole});
     }
 
     m_audioAnalysisQueue = selectedAudioTrackIndices();
@@ -877,7 +848,8 @@ void AppController::autoAdjustAudioTracks(double targetDb, bool analyzeAllTracks
     }
     m_analyzingAudio = true;
     m_audioAnalysisStatus = QStringLiteral("音量を解析しています…");
-    emit mediaTracksChanged();
+    m_audioTrackModel->notifyAllTracksChanged(
+        {AudioTrackModel::HasMeasurementRole, AudioTrackModel::HasRecommendationRole});
     emit audioAnalysisChanged();
     startNextAudioAnalysis();
 }
@@ -1396,7 +1368,11 @@ void AppController::finishAudioAnalysis()
     } else {
         m_audioAnalysisStatus = QStringLiteral("音量を解析できませんでした。");
     }
-    emit mediaTracksChanged();
+    m_audioTrackModel->notifyAllTracksChanged({AudioTrackModel::GainDbRole,
+                                               AudioTrackModel::HasMeasurementRole,
+                                               AudioTrackModel::MeanVolumeDbRole,
+                                               AudioTrackModel::HasRecommendationRole,
+                                               AudioTrackModel::RecommendedGainDbRole});
     emit audioAnalysisChanged();
 }
 

@@ -30,6 +30,8 @@ qt_add_executable(discord-video
     src/main.cpp
     src/AppController.cpp
     src/AppController.h
+    src/AudioTrackModel.cpp
+    src/AudioTrackModel.h
 )
 
 set(DISCORDVIDEO_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/assets/DiscordVideo.ico")

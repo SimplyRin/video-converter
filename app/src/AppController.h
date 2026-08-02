@@ -11,6 +11,8 @@
 #include <QUrl>
 #include <QVariantList>
 
+#include "AudioTrackModel.h"
+
 class AppController final : public QObject
 {
     Q_OBJECT
@@ -23,7 +25,7 @@ class AppController final : public QObject
     Q_PROPERTY(bool toolsReady READ toolsReady NOTIFY toolsChanged)
     Q_PROPERTY(QString toolStatus READ toolStatus NOTIFY toolsChanged)
     Q_PROPERTY(QVariantList videoTracks READ videoTracks NOTIFY mediaTracksChanged)
-    Q_PROPERTY(QVariantList audioTracks READ audioTracks NOTIFY mediaTracksChanged)
+    Q_PROPERTY(AudioTrackModel *audioTrackModel READ audioTrackModel CONSTANT)
     Q_PROPERTY(QVariantList audioTrackLevels READ audioTrackLevels NOTIFY audioTrackLevelsChanged)
     Q_PROPERTY(bool audioWaveformCapturing READ audioWaveformCapturing WRITE setAudioWaveformCapturing NOTIFY audioWaveformCapturingChanged)
     Q_PROPERTY(int audioWaveformSampleCount READ audioWaveformSampleCount CONSTANT)
@@ -57,7 +59,7 @@ public:
     [[nodiscard]] bool toolsReady() const;
     [[nodiscard]] QString toolStatus() const;
     [[nodiscard]] QVariantList videoTracks() const;
-    [[nodiscard]] QVariantList audioTracks() const;
+    [[nodiscard]] AudioTrackModel *audioTrackModel() const;
     [[nodiscard]] QVariantList audioTrackLevels() const;
     [[nodiscard]] bool audioWaveformCapturing() const;
     [[nodiscard]] int audioWaveformSampleCount() const;
@@ -93,8 +95,8 @@ public:
     Q_INVOKABLE void clearAudioWaveforms();
     Q_INVOKABLE void reportAudioMeteringAvailable();
     // Waveform history, oldest sample first, in dBFS. Kept here rather than in
-    // the QML delegates because backend.audioTracks is rebuilt on every
-    // mediaTracksChanged(), which destroys and recreates every delegate.
+    // the QML delegates so it survives delegate teardown (e.g. when a new file
+    // resets the audio track model).
     [[nodiscard]] Q_INVOKABLE QVariantList audioTrackWaveform(int trackIndex) const;
     [[nodiscard]] Q_INVOKABLE QVariantList audioMixWaveform() const;
     [[nodiscard]] Q_INVOKABLE double audioTrackLevelDb(int trackIndex) const;
@@ -141,21 +143,6 @@ private:
         QString language;
         int width = 0;
         int height = 0;
-    };
-
-    struct AudioTrackInfo {
-        int streamIndex = -1;
-        QString codec;
-        QString title;
-        QString language;
-        QString channelLayout;
-        int channels = 0;
-        bool selected = false;
-        double gainDb = 0.0;
-        double measuredMeanDb = 0.0;
-        bool hasMeasurement = false;
-        double recommendedGainDb = 0.0;
-        bool hasRecommendation = false;
     };
 
     void locateTools();
@@ -229,6 +216,7 @@ private:
     QString m_updateStatus = QStringLiteral("アップデートはまだ確認されていません。");
     QList<VideoTrackInfo> m_videoTracks;
     QList<AudioTrackInfo> m_audioTracks;
+    AudioTrackModel *m_audioTrackModel = nullptr;
     QList<double> m_audioTrackLevels;
     QList<QList<double>> m_audioTrackWaveforms;
     QList<double> m_audioMixWaveform;
