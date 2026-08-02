@@ -54,6 +54,13 @@ ApplicationWindow {
         backend.resetAudioTrackLevels()
     }
 
+    // Follow the system default output device. The preview players now live
+    // for as long as the track model, so without this an AudioOutput would
+    // stay attached to whatever device was the default when it was created.
+    MediaDevices {
+        id: mediaDevices
+    }
+
     AudioOutput {
         id: silentVideoAudioOutput
         muted: true
@@ -155,6 +162,7 @@ ApplicationWindow {
 
             AudioOutput {
                 id: trackAudioOutput
+                device: mediaDevices.defaultAudioOutput
                 muted: !audioPreview.previewEnabled
                        || trackPlayer.activeAudioTrack
                           !== audioPreview.trackIndex
